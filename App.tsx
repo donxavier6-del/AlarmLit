@@ -37,6 +37,20 @@ if (!isExpoGo) {
       shouldShowList: true,
     }),
   });
+
+  // Set up Android notification channel with IMPORTANCE_HIGH for alarms
+  if (Platform.OS === 'android') {
+    Notifications.setNotificationChannelAsync('alarms', {
+      name: 'Alarms',
+      importance: Notifications.AndroidImportance.MAX,
+      sound: 'default',
+      vibrationPattern: [0, 250, 250, 250],
+      enableLights: true,
+      lightColor: '#818CF8',
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      bypassDnd: true,
+    });
+  }
 }
 
 type AlarmSound = 'sunrise' | 'ocean' | 'forest' | 'chimes' | 'piano' | 'birds';
@@ -126,6 +140,7 @@ const STORAGE_KEY = '@softwake_alarms';
 const SLEEP_STORAGE_KEY = '@softwake_sleep_data';
 const SETTINGS_STORAGE_KEY = '@softwake_settings';
 const BEDTIME_NOTIFICATION_ID = 'bedtime-reminder';
+const ALARM_NOTIFICATION_PREFIX = 'alarm-';
 
 const SLEEP_GOAL_OPTIONS = [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10];
 
@@ -139,6 +154,40 @@ const DEFAULT_SETTINGS: Settings = {
   sleepGoalHours: 8,
   darkMode: true,
   hapticFeedback: true,
+};
+
+// Theme colors
+const THEMES = {
+  dark: {
+    gradient: ['#0a0a1a', '#1a1a2e', '#0f0f23'] as const,
+    alarmGradient: ['#1a1a3e', '#2d1b69', '#1a3a5c'] as const,
+    background: '#0D0D0D',
+    card: '#1A1A1A',
+    cardAlt: '#141414',
+    surface: '#2A2A2A',
+    text: '#FFFFFF',
+    textMuted: '#9999AA',
+    textDisabled: '#666666',
+    accent: '#818CF8',
+    accentAlt: '#6366F1',
+    switchTrackOff: '#2A2A2A',
+    switchThumbOff: '#666666',
+  },
+  light: {
+    gradient: ['#f0f4ff', '#e8eeff', '#f5f7ff'] as const,
+    alarmGradient: ['#c7d2fe', '#a5b4fc', '#93c5fd'] as const,
+    background: '#FFFFFF',
+    card: '#F5F5F7',
+    cardAlt: '#FAFAFA',
+    surface: '#E5E5EA',
+    text: '#1C1C1E',
+    textMuted: '#6B6B7A',
+    textDisabled: '#AEAEB2',
+    accent: '#6366F1',
+    accentAlt: '#818CF8',
+    switchTrackOff: '#E5E5EA',
+    switchThumbOff: '#FFFFFF',
+  },
 };
 
 // Premium Wheel Time Picker with smooth scrolling like iOS/Android alarm apps
@@ -447,6 +496,7 @@ export default function App() {
 
   // Settings state
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const theme = settings.darkMode ? THEMES.dark : THEMES.light;
   const [bedtimePickerVisible, setBedtimePickerVisible] = useState(false);
 
   // Stats modal state
@@ -483,17 +533,18 @@ export default function App() {
     loadData();
   }, []);
 
-  // Save alarms to storage whenever they change
+  // Save alarms to storage and schedule notifications whenever they change
   useEffect(() => {
     if (!isLoaded) return;
-    const saveAlarms = async () => {
+    const saveAlarmsAndSchedule = async () => {
       try {
         await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(alarms));
+        await scheduleAlarmNotifications(alarms);
       } catch (error) {
         console.log('Error saving alarms:', error);
       }
     };
-    saveAlarms();
+    saveAlarmsAndSchedule();
   }, [alarms, isLoaded]);
 
   // Save sleep data to storage whenever it changes
@@ -572,6 +623,85 @@ export default function App() {
         minute: reminderMinute,
       },
     });
+  };
+
+  // Schedule alarm notifications so they fire even when app is killed
+  const scheduleAlarmNotifications = async (alarmsToSchedule: Alarm[]) => {
+    // Skip notifications in Expo Go (not supported in SDK 53+)
+    if (isExpoGo) return;
+
+    // Cancel all existing alarm notifications
+    const scheduledNotifications = await Notifications.getAllScheduledNotificationsAsync();
+    for (const notification of scheduledNotifications) {
+      if (notification.identifier.startsWith(ALARM_NOTIFICATION_PREFIX)) {
+        await Notifications.cancelScheduledNotificationAsync(notification.identifier);
+      }
+    }
+
+    // Schedule notifications for each enabled alarm
+    for (const alarm of alarmsToSchedule) {
+      if (!alarm.enabled) continue;
+
+      const formatTime = (h: number, m: number) => {
+        const displayHour = h % 12 || 12;
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        return `${displayHour}:${m.toString().padStart(2, '0')} ${ampm}`;
+      };
+
+      const hasRepeatingDays = alarm.days.some((d) => d);
+
+      if (hasRepeatingDays) {
+        // Schedule for each selected day of the week
+        for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
+          if (!alarm.days[dayIndex]) continue;
+
+          // Map dayIndex (0=Sun, 1=Mon, ...) to weekday (1=Sun, 2=Mon, ...)
+          const weekday = dayIndex + 1;
+
+          await Notifications.scheduleNotificationAsync({
+            identifier: `${ALARM_NOTIFICATION_PREFIX}${alarm.id}-${dayIndex}`,
+            content: {
+              title: alarm.label || 'Softwake Alarm',
+              body: `Alarm for ${formatTime(alarm.hour, alarm.minute)}`,
+              sound: true,
+              data: { alarmId: alarm.id },
+              ...(Platform.OS === 'android' && { channelId: 'alarms' }),
+            },
+            trigger: {
+              type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+              weekday,
+              hour: alarm.hour,
+              minute: alarm.minute,
+            },
+          });
+        }
+      } else {
+        // One-time alarm: schedule for next occurrence
+        const now = new Date();
+        const alarmDate = new Date();
+        alarmDate.setHours(alarm.hour, alarm.minute, 0, 0);
+
+        // If alarm time has passed today, schedule for tomorrow
+        if (alarmDate <= now) {
+          alarmDate.setDate(alarmDate.getDate() + 1);
+        }
+
+        await Notifications.scheduleNotificationAsync({
+          identifier: `${ALARM_NOTIFICATION_PREFIX}${alarm.id}-once`,
+          content: {
+            title: alarm.label || 'Softwake Alarm',
+            body: `Alarm for ${formatTime(alarm.hour, alarm.minute)}`,
+            sound: true,
+            data: { alarmId: alarm.id },
+            ...(Platform.OS === 'android' && { channelId: 'alarms' }),
+          },
+          trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.DATE,
+            date: alarmDate,
+          },
+        });
+      }
+    }
   };
 
   useEffect(() => {
@@ -792,6 +922,38 @@ export default function App() {
 
     await playAlarmSound(alarm.wakeIntensity, alarm.sound);
   };
+
+  // Handle notification received (triggers alarm when notification fires)
+  useEffect(() => {
+    if (isExpoGo) return;
+
+    // Listen for notifications received while app is foregrounded
+    const notificationReceivedSubscription = Notifications.addNotificationReceivedListener((notification) => {
+      const data = notification.request.content.data;
+      if (data?.alarmId) {
+        const alarm = alarms.find((a) => a.id === data.alarmId);
+        if (alarm && alarm.enabled) {
+          triggerAlarm(alarm);
+        }
+      }
+    });
+
+    // Listen for user tapping on notification (app may be backgrounded/killed)
+    const notificationResponseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data;
+      if (data?.alarmId) {
+        const alarm = alarms.find((a) => a.id === data.alarmId);
+        if (alarm && alarm.enabled) {
+          triggerAlarm(alarm);
+        }
+      }
+    });
+
+    return () => {
+      notificationReceivedSubscription.remove();
+      notificationResponseSubscription.remove();
+    };
+  }, [alarms]);
 
   // Sound configurations for different alarm tones
   const SOUND_CONFIGS: Record<AlarmSound, { rate: number; pattern: number[] | null }> = {
@@ -1331,17 +1493,18 @@ export default function App() {
 
   return (
     <GestureHandlerRootView style={styles.container}>
-      <StatusBar style="light" />
+      <LinearGradient colors={[...theme.gradient]} style={styles.container}>
+      <StatusBar style={settings.darkMode ? 'light' : 'dark'} />
 
       {/* Tab Content */}
       {activeTab === 'alarms' && (
         <View style={styles.tabContent}>
           <View style={styles.clockContainer}>
-            <Text style={styles.timeText}>{time}</Text>
-            <Text style={styles.ampmText}>{ampm}</Text>
+            <Text style={[styles.timeText, { color: theme.text }]}>{time}</Text>
+            <Text style={[styles.ampmText, { color: theme.textMuted }]}>{ampm}</Text>
           </View>
 
-          <Text style={styles.dateText}>
+          <Text style={[styles.dateText, { color: theme.textMuted }]}>
             {currentTime.toLocaleDateString('en-US', {
               weekday: 'long',
               month: 'long',
@@ -1352,65 +1515,69 @@ export default function App() {
           <View style={styles.countdownContainer}>
             {alarms.some(a => a.enabled) ? (
               <>
-                <Text style={styles.countdownIcon}>☽</Text>
-                <Text style={styles.countdownText}>{formatCountdownText()}</Text>
+                <Text style={[styles.countdownIcon, { color: theme.textMuted }]}>☽</Text>
+                <Text style={[styles.countdownText, { color: theme.textMuted }]}>{formatCountdownText()}</Text>
               </>
             ) : (
               <>
-                <Text style={styles.countdownIcon}>☁</Text>
-                <Text style={styles.countdownText}>No alarms set – sleep well tonight</Text>
+                <Text style={[styles.countdownIcon, { color: theme.textMuted }]}>☁</Text>
+                <Text style={[styles.countdownText, { color: theme.textMuted }]}>No alarms set – sleep well tonight</Text>
               </>
             )}
           </View>
 
           <View style={styles.alarmsContainer}>
-            <Text style={styles.sectionTitle}>Alarms</Text>
+            <Text style={[styles.sectionTitle, { color: theme.textMuted }]}>Alarms</Text>
             {alarms.length === 0 ? (
-              <Text style={styles.noAlarmsText}>No alarms set</Text>
+              <Text style={[styles.noAlarmsText, { color: theme.textMuted }]}>No alarms set</Text>
             ) : (
-              alarms.map((alarm) => (
-                <Swipeable
-                  key={alarm.id}
-                  renderRightActions={(progress, dragX) =>
-                    renderRightActions(progress, dragX, alarm.id)
-                  }
-                  overshootRight={false}
-                  overshootLeft={false}
-                  containerStyle={styles.swipeableContainer}
-                >
-                  <View style={styles.alarmItem}>
-                    <TouchableOpacity
-                      style={styles.alarmInfo}
-                      onPress={() => handleEditAlarm(alarm)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[
-                        styles.alarmTime,
-                        !alarm.enabled && styles.alarmTimeDisabled,
-                      ]}>
-                        {formatAlarmTime(alarm.hour, alarm.minute)}
-                      </Text>
-                      <Text style={[
-                        styles.alarmDays,
-                        !alarm.enabled && styles.alarmDaysDisabled,
-                      ]}>
-                        {alarm.label ? `${alarm.label} · ` : ''}{getRepeatText(alarm.days)}
-                        {alarm.wakeIntensity && alarm.wakeIntensity !== 'energetic' ? ` · ${alarm.wakeIntensity.charAt(0).toUpperCase() + alarm.wakeIntensity.slice(1)}` : ''}
-                      </Text>
-                    </TouchableOpacity>
-                    <Switch
-                      value={alarm.enabled}
-                      onValueChange={() => toggleAlarm(alarm.id)}
-                      trackColor={{ false: '#2A2A2A', true: '#818CF8' }}
-                      thumbColor={alarm.enabled ? '#FFFFFF' : '#666666'}
-                    />
-                  </View>
-                </Swipeable>
-              ))
+              <ScrollView style={styles.alarmsList} showsVerticalScrollIndicator={false}>
+                {alarms.map((alarm) => (
+                  <Swipeable
+                    key={alarm.id}
+                    renderRightActions={(progress, dragX) =>
+                      renderRightActions(progress, dragX, alarm.id)
+                    }
+                    overshootRight={false}
+                    overshootLeft={false}
+                    containerStyle={styles.swipeableContainer}
+                  >
+                    <View style={[styles.alarmItem, { backgroundColor: theme.card }]}>
+                      <TouchableOpacity
+                        style={styles.alarmInfo}
+                        onPress={() => handleEditAlarm(alarm)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[
+                          styles.alarmTime,
+                          { color: theme.text },
+                          !alarm.enabled && { color: theme.textDisabled },
+                        ]}>
+                          {formatAlarmTime(alarm.hour, alarm.minute)}
+                        </Text>
+                        <Text style={[
+                          styles.alarmDays,
+                          { color: theme.textMuted },
+                          !alarm.enabled && { color: theme.textDisabled },
+                        ]}>
+                          {alarm.label ? `${alarm.label} · ` : ''}{getRepeatText(alarm.days)}
+                          {alarm.wakeIntensity && alarm.wakeIntensity !== 'energetic' ? ` · ${alarm.wakeIntensity.charAt(0).toUpperCase() + alarm.wakeIntensity.slice(1)}` : ''}
+                        </Text>
+                      </TouchableOpacity>
+                      <Switch
+                        value={alarm.enabled}
+                        onValueChange={() => toggleAlarm(alarm.id)}
+                        trackColor={{ false: theme.switchTrackOff, true: theme.accent }}
+                        thumbColor={alarm.enabled ? '#FFFFFF' : theme.switchThumbOff}
+                      />
+                    </View>
+                  </Swipeable>
+                ))}
+              </ScrollView>
             )}
           </View>
 
-          <TouchableOpacity style={styles.addButton} onPress={handleAddAlarm}>
+          <TouchableOpacity style={[styles.addButton, { backgroundColor: theme.accent }]} onPress={handleAddAlarm}>
             <Text style={styles.addButtonText}>+</Text>
           </TouchableOpacity>
         </View>
@@ -1419,7 +1586,7 @@ export default function App() {
       {activeTab === 'morning' && (
         <View style={styles.tabContent}>
           <View style={styles.morningContainer}>
-            <Text style={styles.morningGreeting}>
+            <Text style={[styles.morningGreeting, { color: theme.text }]}>
               {(() => {
                 const h = new Date().getHours();
                 if (h < 12) return 'Good morning';
@@ -1427,29 +1594,29 @@ export default function App() {
                 return 'Good evening';
               })()}
             </Text>
-            <Text style={styles.morningQuote}>
+            <Text style={[styles.morningQuote, { color: theme.textMuted }]}>
               "Today is full of possibilities"
             </Text>
             <View style={styles.morningButtons}>
               <TouchableOpacity
-                style={styles.morningButton}
+                style={[styles.morningButton, { backgroundColor: theme.card }]}
                 onPress={() => {
                   if (settings.hapticFeedback) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   Alert.alert('Deep Breath', 'Breathe in... hold... breathe out...');
                 }}
               >
                 <Text style={styles.morningButtonIcon}>🌬️</Text>
-                <Text style={styles.morningButtonLabel}>Deep Breath</Text>
+                <Text style={[styles.morningButtonLabel, { color: theme.text }]}>Deep Breath</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.morningButton}
+                style={[styles.morningButton, { backgroundColor: theme.card }]}
                 onPress={() => {
                   if (settings.hapticFeedback) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   Alert.alert('Set Intention', 'What do you want to focus on today?');
                 }}
               >
                 <Text style={styles.morningButtonIcon}>🎯</Text>
-                <Text style={styles.morningButtonLabel}>Set Intention</Text>
+                <Text style={[styles.morningButtonLabel, { color: theme.text }]}>Set Intention</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1457,22 +1624,63 @@ export default function App() {
       )}
 
       {activeTab === 'insights' && (
-        <View style={styles.tabContent}>
-          <View style={styles.placeholderScreen}>
-            <Text style={styles.placeholderIcon}>{"📊"}</Text>
-            <Text style={styles.placeholderTitle}>Sleep Insights</Text>
-            <Text style={styles.placeholderSubtitle}>
-              Track your sleep patterns and get recommendations
-            </Text>
+        <ScrollView style={styles.insightsContainer} showsVerticalScrollIndicator={false}>
+          <Text style={[styles.insightsTitle, { color: theme.text }]}>Sleep Insights</Text>
+
+          {/* Weekly Sleep Chart */}
+          <View style={[styles.insightsCard, { backgroundColor: theme.card }]}>
+            <Text style={[styles.insightsCardLabel, { color: theme.textMuted }]}>This Week</Text>
+            <View style={styles.insightsChart}>
+              {[
+                { day: 'M', hrs: 7.5 },
+                { day: 'T', hrs: 6.2 },
+                { day: 'W', hrs: 7.8 },
+                { day: 'T', hrs: 5.5 },
+                { day: 'F', hrs: 7.0 },
+                { day: 'S', hrs: 8.2 },
+                { day: 'S', hrs: 7.0 },
+              ].map((d, i) => (
+                <View key={i} style={styles.insightsBarCol}>
+                  <View style={[styles.insightsBarTrack, { backgroundColor: theme.surface }]}>
+                    <View style={[styles.insightsBar, { height: `${(d.hrs / 10) * 100}%`, backgroundColor: theme.accent }]} />
+                  </View>
+                  <Text style={[styles.insightsBarLabel, { color: theme.textMuted }]}>{d.day}</Text>
+                </View>
+              ))}
+            </View>
           </View>
-        </View>
+
+          {/* Stats Row */}
+          <View style={styles.insightsStatsRow}>
+            <View style={[styles.insightsStatBox, { backgroundColor: theme.card }]}>
+              <Text style={[styles.insightsStatValue, { color: theme.text }]}>7.2 hrs</Text>
+              <Text style={[styles.insightsStatLabel, { color: theme.textMuted }]}>Avg Sleep</Text>
+            </View>
+            <View style={[styles.insightsStatBox, { backgroundColor: theme.card }]}>
+              <Text style={[styles.insightsStatValue, { color: theme.text }]}>8 hrs</Text>
+              <Text style={[styles.insightsStatLabel, { color: theme.textMuted }]}>Sleep Goal</Text>
+            </View>
+          </View>
+
+          {/* Sleep Debt Card */}
+          <View style={[styles.insightsCard, { backgroundColor: theme.card }]}>
+            <Text style={[styles.insightsCardLabel, { color: theme.textMuted }]}>Sleep Debt</Text>
+            <Text style={[styles.insightsCardValue, { color: theme.text }]}>You're 5.6 hrs behind this week</Text>
+          </View>
+
+          {/* Tip Card */}
+          <View style={[styles.insightsCard, styles.insightsTipCard, { backgroundColor: theme.accentAlt }]}>
+            <Text style={styles.insightsTipLabel}>Tip</Text>
+            <Text style={styles.insightsTipText}>Try going to bed 15 minutes earlier tonight</Text>
+          </View>
+        </ScrollView>
       )}
 
       {activeTab === 'settings' && (
         <ScrollView style={styles.settingsTabContent} showsVerticalScrollIndicator={false}>
           {/* Alarm Defaults */}
-          <Text style={styles.settingsSectionHeader}>Alarm Defaults</Text>
-          <View style={styles.settingsCard}>
+          <Text style={[styles.settingsSectionHeader, { color: theme.textMuted }]}>Alarm Defaults</Text>
+          <View style={[styles.settingsCard, { backgroundColor: theme.card }]}>
             <TouchableOpacity
               style={styles.settingsItem}
               onPress={() => {
@@ -1481,12 +1689,12 @@ export default function App() {
                 updateSettings({ defaultWakeIntensity: WAKE_INTENSITY_OPTIONS[nextIndex].value });
               }}
             >
-              <Text style={styles.settingsItemLabel}>Wake Intensity</Text>
-              <Text style={styles.settingsItemValue}>
+              <Text style={[styles.settingsItemLabel, { color: theme.text }]}>Wake Intensity</Text>
+              <Text style={[styles.settingsItemValue, { color: theme.textMuted }]}>
                 {WAKE_INTENSITY_OPTIONS.find((o) => o.value === settings.defaultWakeIntensity)?.label}
               </Text>
             </TouchableOpacity>
-            <View style={styles.settingsDivider} />
+            <View style={[styles.settingsDivider, { backgroundColor: theme.surface }]} />
             <TouchableOpacity
               style={styles.settingsItem}
               onPress={() => {
@@ -1495,12 +1703,12 @@ export default function App() {
                 updateSettings({ defaultSound: SOUND_OPTIONS[nextIndex].value });
               }}
             >
-              <Text style={styles.settingsItemLabel}>Sound</Text>
-              <Text style={styles.settingsItemValue}>
+              <Text style={[styles.settingsItemLabel, { color: theme.text }]}>Sound</Text>
+              <Text style={[styles.settingsItemValue, { color: theme.textMuted }]}>
                 {SOUND_OPTIONS.find((o) => o.value === settings.defaultSound)?.label}
               </Text>
             </TouchableOpacity>
-            <View style={styles.settingsDivider} />
+            <View style={[styles.settingsDivider, { backgroundColor: theme.surface }]} />
             <TouchableOpacity
               style={styles.settingsItem}
               onPress={() => {
@@ -1509,21 +1717,21 @@ export default function App() {
                 updateSettings({ defaultDismissType: DISMISS_OPTIONS[nextIndex].value });
               }}
             >
-              <Text style={styles.settingsItemLabel}>Dismiss Method</Text>
-              <Text style={styles.settingsItemValue}>
+              <Text style={[styles.settingsItemLabel, { color: theme.text }]}>Dismiss Method</Text>
+              <Text style={[styles.settingsItemValue, { color: theme.textMuted }]}>
                 {DISMISS_OPTIONS.find((o) => o.value === settings.defaultDismissType)?.label}
               </Text>
             </TouchableOpacity>
           </View>
 
           {/* Sleep */}
-          <Text style={styles.settingsSectionHeader}>Sleep</Text>
-          <View style={styles.settingsCard}>
+          <Text style={[styles.settingsSectionHeader, { color: theme.textMuted }]}>Sleep</Text>
+          <View style={[styles.settingsCard, { backgroundColor: theme.card }]}>
             <View style={styles.settingsItemRow}>
               <View style={styles.settingsItemLabelContainer}>
-                <Text style={styles.settingsItemLabel}>Bedtime Reminder</Text>
+                <Text style={[styles.settingsItemLabel, { color: theme.text }]}>Bedtime Reminder</Text>
                 {settings.bedtimeReminderEnabled && (
-                  <Text style={styles.settingsItemSubtext}>
+                  <Text style={[styles.settingsItemSubtext, { color: theme.textMuted }]}>
                     Reminder at {formatSettingsTime(
                       settings.bedtimeMinute < 30
                         ? (settings.bedtimeHour === 0 ? 23 : settings.bedtimeHour - 1)
@@ -1541,15 +1749,15 @@ export default function App() {
                   updateSettings({ bedtimeReminderEnabled: val });
                   if (val) setBedtimePickerVisible(true);
                 }}
-                trackColor={{ false: '#2A2A2A', true: '#818CF8' }}
-                thumbColor={settings.bedtimeReminderEnabled ? '#FFFFFF' : '#666666'}
+                trackColor={{ false: theme.switchTrackOff, true: theme.accent }}
+                thumbColor={settings.bedtimeReminderEnabled ? '#FFFFFF' : theme.switchThumbOff}
               />
             </View>
             {settings.bedtimeReminderEnabled && bedtimePickerVisible && (
               <>
-                <View style={styles.settingsDivider} />
+                <View style={[styles.settingsDivider, { backgroundColor: theme.surface }]} />
                 <View style={styles.settingsBedtimePicker}>
-                  <Text style={styles.settingsPickerLabel}>Target Bedtime</Text>
+                  <Text style={[styles.settingsPickerLabel, { color: theme.text }]}>Target Bedtime</Text>
                   <TimePicker
                     hour={settings.bedtimeHour}
                     minute={settings.bedtimeMinute}
@@ -1562,19 +1770,19 @@ export default function App() {
             )}
             {settings.bedtimeReminderEnabled && !bedtimePickerVisible && (
               <>
-                <View style={styles.settingsDivider} />
+                <View style={[styles.settingsDivider, { backgroundColor: theme.surface }]} />
                 <TouchableOpacity
                   style={styles.settingsItem}
                   onPress={() => setBedtimePickerVisible(true)}
                 >
-                  <Text style={styles.settingsItemLabel}>Target Bedtime</Text>
-                  <Text style={styles.settingsItemValue}>
+                  <Text style={[styles.settingsItemLabel, { color: theme.text }]}>Target Bedtime</Text>
+                  <Text style={[styles.settingsItemValue, { color: theme.textMuted }]}>
                     {formatSettingsTime(settings.bedtimeHour, settings.bedtimeMinute)}
                   </Text>
                 </TouchableOpacity>
               </>
             )}
-            <View style={styles.settingsDivider} />
+            <View style={[styles.settingsDivider, { backgroundColor: theme.surface }]} />
             <TouchableOpacity
               style={styles.settingsItem}
               onPress={() => {
@@ -1583,8 +1791,8 @@ export default function App() {
                 updateSettings({ sleepGoalHours: SLEEP_GOAL_OPTIONS[nextIndex] });
               }}
             >
-              <Text style={styles.settingsItemLabel}>Sleep Goal</Text>
-              <Text style={styles.settingsItemValue}>
+              <Text style={[styles.settingsItemLabel, { color: theme.text }]}>Sleep Goal</Text>
+              <Text style={[styles.settingsItemValue, { color: theme.textMuted }]}>
                 {settings.sleepGoalHours % 1 === 0
                   ? `${settings.sleepGoalHours} hours`
                   : `${Math.floor(settings.sleepGoalHours)}h ${(settings.sleepGoalHours % 1) * 60}m`}
@@ -1593,59 +1801,59 @@ export default function App() {
           </View>
 
           {/* App */}
-          <Text style={styles.settingsSectionHeader}>App</Text>
-          <View style={styles.settingsCard}>
+          <Text style={[styles.settingsSectionHeader, { color: theme.textMuted }]}>App</Text>
+          <View style={[styles.settingsCard, { backgroundColor: theme.card }]}>
             <View style={styles.settingsItemRow}>
-              <Text style={styles.settingsItemLabel}>Dark Mode</Text>
+              <Text style={[styles.settingsItemLabel, { color: theme.text }]}>Dark Mode</Text>
               <Switch
                 value={settings.darkMode}
                 onValueChange={(val) => updateSettings({ darkMode: val })}
-                trackColor={{ false: '#2A2A2A', true: '#818CF8' }}
-                thumbColor={settings.darkMode ? '#FFFFFF' : '#666666'}
+                trackColor={{ false: theme.switchTrackOff, true: theme.accent }}
+                thumbColor={settings.darkMode ? '#FFFFFF' : theme.switchThumbOff}
               />
             </View>
-            <View style={styles.settingsDivider} />
+            <View style={[styles.settingsDivider, { backgroundColor: theme.surface }]} />
             <View style={styles.settingsItemRow}>
-              <Text style={styles.settingsItemLabel}>Haptic Feedback</Text>
+              <Text style={[styles.settingsItemLabel, { color: theme.text }]}>Haptic Feedback</Text>
               <Switch
                 value={settings.hapticFeedback}
                 onValueChange={(val) => updateSettings({ hapticFeedback: val })}
-                trackColor={{ false: '#2A2A2A', true: '#818CF8' }}
-                thumbColor={settings.hapticFeedback ? '#FFFFFF' : '#666666'}
+                trackColor={{ false: theme.switchTrackOff, true: theme.accent }}
+                thumbColor={settings.hapticFeedback ? '#FFFFFF' : theme.switchThumbOff}
               />
             </View>
           </View>
 
           {/* About */}
-          <Text style={styles.settingsSectionHeader}>About</Text>
-          <View style={styles.settingsCard}>
+          <Text style={[styles.settingsSectionHeader, { color: theme.textMuted }]}>About</Text>
+          <View style={[styles.settingsCard, { backgroundColor: theme.card }]}>
             <View style={styles.settingsItem}>
-              <Text style={styles.settingsItemLabel}>Version</Text>
-              <Text style={styles.settingsItemValue}>1.0.0</Text>
+              <Text style={[styles.settingsItemLabel, { color: theme.text }]}>Version</Text>
+              <Text style={[styles.settingsItemValue, { color: theme.textMuted }]}>1.0.0</Text>
             </View>
-            <View style={styles.settingsDivider} />
+            <View style={[styles.settingsDivider, { backgroundColor: theme.surface }]} />
             <TouchableOpacity
               style={styles.settingsItem}
               onPress={() => Alert.alert('Rate Softwake', 'This will open the app store. (Coming soon)')}
             >
-              <Text style={styles.settingsItemLabel}>Rate Softwake</Text>
-              <Text style={styles.settingsItemChevron}>›</Text>
+              <Text style={[styles.settingsItemLabel, { color: theme.text }]}>Rate Softwake</Text>
+              <Text style={[styles.settingsItemChevron, { color: theme.textMuted }]}>›</Text>
             </TouchableOpacity>
-            <View style={styles.settingsDivider} />
+            <View style={[styles.settingsDivider, { backgroundColor: theme.surface }]} />
             <TouchableOpacity
               style={styles.settingsItem}
               onPress={() => Alert.alert('Send Feedback', 'Feedback form coming soon.')}
             >
-              <Text style={styles.settingsItemLabel}>Send Feedback</Text>
-              <Text style={styles.settingsItemChevron}>›</Text>
+              <Text style={[styles.settingsItemLabel, { color: theme.text }]}>Send Feedback</Text>
+              <Text style={[styles.settingsItemChevron, { color: theme.textMuted }]}>›</Text>
             </TouchableOpacity>
-            <View style={styles.settingsDivider} />
+            <View style={[styles.settingsDivider, { backgroundColor: theme.surface }]} />
             <TouchableOpacity
               style={styles.settingsItem}
               onPress={() => Alert.alert('Privacy Policy', 'Privacy policy page coming soon.')}
             >
-              <Text style={styles.settingsItemLabel}>Privacy Policy</Text>
-              <Text style={styles.settingsItemChevron}>›</Text>
+              <Text style={[styles.settingsItemLabel, { color: theme.text }]}>Privacy Policy</Text>
+              <Text style={[styles.settingsItemChevron, { color: theme.textMuted }]}>›</Text>
             </TouchableOpacity>
           </View>
 
@@ -1654,16 +1862,16 @@ export default function App() {
       )}
 
       {/* Bottom Tab Bar */}
-      <View style={styles.tabBar}>
+      <View style={[styles.tabBar, { backgroundColor: theme.card, borderTopColor: theme.surface }]}>
         <TouchableOpacity
           style={styles.tabItem}
           onPress={() => setActiveTab('alarms')}
           activeOpacity={0.7}
         >
-          <Text style={[styles.tabIcon, activeTab === 'alarms' && styles.tabIconActive]}>
+          <Text style={[styles.tabIcon, { color: theme.textMuted }, activeTab === 'alarms' && { color: theme.accent }]}>
             {"⏰"}
           </Text>
-          <Text style={[styles.tabLabel, activeTab === 'alarms' && styles.tabLabelActive]}>
+          <Text style={[styles.tabLabel, { color: theme.textMuted }, activeTab === 'alarms' && { color: theme.accent }]}>
             Alarms
           </Text>
         </TouchableOpacity>
@@ -1673,10 +1881,10 @@ export default function App() {
           onPress={() => setActiveTab('morning')}
           activeOpacity={0.7}
         >
-          <Text style={[styles.tabIcon, activeTab === 'morning' && styles.tabIconActive]}>
+          <Text style={[styles.tabIcon, { color: theme.textMuted }, activeTab === 'morning' && { color: theme.accent }]}>
             {"☀\uFE0F"}
           </Text>
-          <Text style={[styles.tabLabel, activeTab === 'morning' && styles.tabLabelActive]}>
+          <Text style={[styles.tabLabel, { color: theme.textMuted }, activeTab === 'morning' && { color: theme.accent }]}>
             Morning
           </Text>
         </TouchableOpacity>
@@ -1686,10 +1894,10 @@ export default function App() {
           onPress={() => setActiveTab('insights')}
           activeOpacity={0.7}
         >
-          <Text style={[styles.tabIcon, activeTab === 'insights' && styles.tabIconActive]}>
+          <Text style={[styles.tabIcon, { color: theme.textMuted }, activeTab === 'insights' && { color: theme.accent }]}>
             {"📊"}
           </Text>
-          <Text style={[styles.tabLabel, activeTab === 'insights' && styles.tabLabelActive]}>
+          <Text style={[styles.tabLabel, { color: theme.textMuted }, activeTab === 'insights' && { color: theme.accent }]}>
             Insights
           </Text>
         </TouchableOpacity>
@@ -1699,10 +1907,10 @@ export default function App() {
           onPress={() => setActiveTab('settings')}
           activeOpacity={0.7}
         >
-          <Text style={[styles.tabIcon, activeTab === 'settings' && styles.tabIconActive]}>
+          <Text style={[styles.tabIcon, { color: theme.textMuted }, activeTab === 'settings' && { color: theme.accent }]}>
             {"⚙\uFE0F"}
           </Text>
-          <Text style={[styles.tabLabel, activeTab === 'settings' && styles.tabLabelActive]}>
+          <Text style={[styles.tabLabel, { color: theme.textMuted }, activeTab === 'settings' && { color: theme.accent }]}>
             Settings
           </Text>
         </TouchableOpacity>
@@ -2367,6 +2575,7 @@ export default function App() {
           </View>
         </View>
       </Modal>
+    </LinearGradient>
     </GestureHandlerRootView>
   );
 }
@@ -2423,6 +2632,9 @@ const styles = StyleSheet.create({
     flex: 1,
     marginTop: 24,
     marginHorizontal: -24,
+  },
+  alarmsList: {
+    flex: 1,
   },
   sectionTitle: {
     fontSize: 14,
@@ -2517,7 +2729,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#141414',
     borderTopWidth: 1,
     borderTopColor: '#1F1F1F',
-    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 10,
     paddingTop: 10,
   },
   tabItem: {
@@ -3544,5 +3756,98 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666666',
     textAlign: 'center',
+  },
+  insightsContainer: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 60,
+  },
+  insightsTitle: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 24,
+  },
+  insightsCard: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+  },
+  insightsCardLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#9999AA',
+    marginBottom: 12,
+  },
+  insightsCardValue: {
+    fontSize: 16,
+    color: '#FFFFFF',
+  },
+  insightsChart: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    height: 120,
+  },
+  insightsBarCol: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  insightsBarTrack: {
+    width: 20,
+    height: 100,
+    backgroundColor: '#2A2A2A',
+    borderRadius: 10,
+    justifyContent: 'flex-end',
+    overflow: 'hidden',
+  },
+  insightsBar: {
+    width: '100%',
+    backgroundColor: '#818CF8',
+    borderRadius: 10,
+  },
+  insightsBarLabel: {
+    fontSize: 12,
+    color: '#9999AA',
+    marginTop: 6,
+  },
+  insightsStatsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  insightsStatBox: {
+    flex: 1,
+    backgroundColor: '#1A1A1A',
+    borderRadius: 16,
+    padding: 16,
+    alignItems: 'center',
+  },
+  insightsStatValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 4,
+  },
+  insightsStatLabel: {
+    fontSize: 13,
+    color: '#9999AA',
+  },
+  insightsTipCard: {
+    borderWidth: 1,
+    borderColor: '#818CF8',
+    marginBottom: 40,
+  },
+  insightsTipLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#818CF8',
+    marginBottom: 6,
+  },
+  insightsTipText: {
+    fontSize: 15,
+    color: '#FFFFFF',
+    lineHeight: 22,
   },
 });
