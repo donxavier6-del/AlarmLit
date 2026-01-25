@@ -13,7 +13,7 @@ import {
   Platform,
   Alert,
 } from 'react-native';
-import { GestureHandlerRootView, Swipeable } from 'react-native-gesture-handler';
+import { GestureHandlerRootView, PanGestureHandler, PanGestureHandlerGestureEvent } from 'react-native-gesture-handler';
 import WheelPicker from 'react-native-wheel-scrollview-picker';
 import * as Haptics from 'expo-haptics';
 import { Audio } from 'expo-av';
@@ -197,13 +197,14 @@ type TimePickerProps = {
   onHourChange: (hour: number) => void;
   onMinuteChange: (minute: number) => void;
   minuteStep?: number;
+  hapticFeedback?: boolean;
 };
 
 // Generate hour data (1-12)
 const HOURS = Array.from({ length: 12 }, (_, i) => i + 1);
 const AMPM = ['AM', 'PM'];
 
-const TimePicker = ({ hour, minute, onHourChange, onMinuteChange, minuteStep = 1 }: TimePickerProps) => {
+const TimePicker = ({ hour, minute, onHourChange, onMinuteChange, minuteStep = 1, hapticFeedback = true }: TimePickerProps) => {
   const displayHour = hour % 12 || 12;
   const isPM = hour >= 12;
   const lastHourRef = useRef(displayHour);
@@ -220,7 +221,7 @@ const TimePicker = ({ hour, minute, onHourChange, onMinuteChange, minuteStep = 1
     const newDisplayHour = HOURS[index];
     if (newDisplayHour !== lastHourRef.current) {
       lastHourRef.current = newDisplayHour;
-      Haptics.selectionAsync();
+      if (hapticFeedback) Haptics.selectionAsync();
       if (isPM) {
         onHourChange(newDisplayHour === 12 ? 12 : newDisplayHour + 12);
       } else {
@@ -233,7 +234,7 @@ const TimePicker = ({ hour, minute, onHourChange, onMinuteChange, minuteStep = 1
     const newMinute = minuteOptions[index];
     if (newMinute !== lastMinuteRef.current) {
       lastMinuteRef.current = newMinute;
-      Haptics.selectionAsync();
+      if (hapticFeedback) Haptics.selectionAsync();
       onMinuteChange(newMinute);
     }
   };
@@ -241,7 +242,7 @@ const TimePicker = ({ hour, minute, onHourChange, onMinuteChange, minuteStep = 1
   const handleAMPMChange = (index: number) => {
     if (index !== lastAmPmRef.current) {
       lastAmPmRef.current = index;
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      if (hapticFeedback) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       if (index === 0 && isPM) {
         onHourChange(hour - 12);
       } else if (index === 1 && !isPM) {
@@ -481,6 +482,11 @@ export default function App() {
   const [shakeComplete, setShakeComplete] = useState(false);
   const lastShakeTime = useRef<number>(0);
 
+  // Undo delete state
+  const [deletedAlarm, setDeletedAlarm] = useState<Alarm | null>(null);
+  const [showUndoToast, setShowUndoToast] = useState(false);
+  const undoTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   // Sleep tracking state
   const [sleepData, setSleepData] = useState<SleepEntry[]>([]);
   const [bedtimeModalVisible, setBedtimeModalVisible] = useState(false);
@@ -661,7 +667,7 @@ export default function App() {
           await Notifications.scheduleNotificationAsync({
             identifier: `${ALARM_NOTIFICATION_PREFIX}${alarm.id}-${dayIndex}`,
             content: {
-              title: alarm.label || 'Softwake Alarm',
+              title: alarm.label || 'SoftWake Alarm',
               body: `Alarm for ${formatTime(alarm.hour, alarm.minute)}`,
               sound: true,
               data: { alarmId: alarm.id },
@@ -689,7 +695,7 @@ export default function App() {
         await Notifications.scheduleNotificationAsync({
           identifier: `${ALARM_NOTIFICATION_PREFIX}${alarm.id}-once`,
           content: {
-            title: alarm.label || 'Softwake Alarm',
+            title: alarm.label || 'SoftWake Alarm',
             body: `Alarm for ${formatTime(alarm.hour, alarm.minute)}`,
             sound: true,
             data: { alarmId: alarm.id },
@@ -1289,7 +1295,40 @@ export default function App() {
   };
 
   const deleteAlarm = (id: string) => {
+    const alarmToDelete = alarms.find((alarm) => alarm.id === id);
+    if (!alarmToDelete) return;
+
+    // Clear any existing undo timer
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current);
+    }
+
+    // Store deleted alarm for undo
+    setDeletedAlarm(alarmToDelete);
+    setShowUndoToast(true);
     setAlarms(alarms.filter((alarm) => alarm.id !== id));
+
+    // Haptic feedback
+    if (settings.hapticFeedback) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+
+    // Auto-hide toast after 3 seconds
+    undoTimerRef.current = setTimeout(() => {
+      setShowUndoToast(false);
+      setDeletedAlarm(null);
+    }, 3000);
+  };
+
+  const undoDelete = () => {
+    if (deletedAlarm) {
+      setAlarms((prev) => [...prev, deletedAlarm]);
+      setDeletedAlarm(null);
+      setShowUndoToast(false);
+      if (undoTimerRef.current) {
+        clearTimeout(undoTimerRef.current);
+      }
+    }
   };
 
   const updateSettings = (partial: Partial<Settings>) => {
@@ -1468,27 +1507,16 @@ export default function App() {
     };
   };
 
-  const renderRightActions = (
-    progress: Animated.AnimatedInterpolation<number>,
-    dragX: Animated.AnimatedInterpolation<number>,
-    id: string
-  ) => {
-    const scale = dragX.interpolate({
-      inputRange: [-100, 0],
-      outputRange: [1, 0.5],
-      extrapolate: 'clamp',
-    });
+  const SWIPE_THRESHOLD = 80;
 
-    return (
-      <TouchableOpacity
-        style={styles.deleteAction}
-        onPress={() => deleteAlarm(id)}
-      >
-        <Animated.Text style={[styles.deleteText, { transform: [{ scale }] }]}>
-          Delete
-        </Animated.Text>
-      </TouchableOpacity>
-    );
+  const createSwipeHandler = (alarmId: string) => {
+    return (event: PanGestureHandlerGestureEvent) => {
+      const { translationX, translationY } = event.nativeEvent;
+      // Swipe left (negative X) or swipe down (positive Y) to delete
+      if (translationX < -SWIPE_THRESHOLD || translationY > SWIPE_THRESHOLD) {
+        deleteAlarm(alarmId);
+      }
+    };
   };
 
   return (
@@ -1533,14 +1561,11 @@ export default function App() {
             ) : (
               <ScrollView style={styles.alarmsList} showsVerticalScrollIndicator={false}>
                 {alarms.map((alarm) => (
-                  <Swipeable
+                  <PanGestureHandler
                     key={alarm.id}
-                    renderRightActions={(progress, dragX) =>
-                      renderRightActions(progress, dragX, alarm.id)
-                    }
-                    overshootRight={false}
-                    overshootLeft={false}
-                    containerStyle={styles.swipeableContainer}
+                    onEnded={createSwipeHandler(alarm.id)}
+                    activeOffsetX={[-20, 20]}
+                    activeOffsetY={[-20, 20]}
                   >
                     <View style={[styles.alarmItem, { backgroundColor: theme.card }]}>
                       <TouchableOpacity
@@ -1571,7 +1596,7 @@ export default function App() {
                         thumbColor={alarm.enabled ? '#FFFFFF' : theme.switchThumbOff}
                       />
                     </View>
-                  </Swipeable>
+                  </PanGestureHandler>
                 ))}
               </ScrollView>
             )}
@@ -1763,6 +1788,7 @@ export default function App() {
                     minute={settings.bedtimeMinute}
                     onHourChange={(h) => updateSettings({ bedtimeHour: h })}
                     onMinuteChange={(m) => updateSettings({ bedtimeMinute: m })}
+                    hapticFeedback={settings.hapticFeedback}
                     minuteStep={5}
                   />
                 </View>
@@ -1834,9 +1860,9 @@ export default function App() {
             <View style={[styles.settingsDivider, { backgroundColor: theme.surface }]} />
             <TouchableOpacity
               style={styles.settingsItem}
-              onPress={() => Alert.alert('Rate Softwake', 'This will open the app store. (Coming soon)')}
+              onPress={() => Alert.alert('Rate SoftWake', 'This will open the app store. (Coming soon)')}
             >
-              <Text style={[styles.settingsItemLabel, { color: theme.text }]}>Rate Softwake</Text>
+              <Text style={[styles.settingsItemLabel, { color: theme.text }]}>Rate SoftWake</Text>
               <Text style={[styles.settingsItemChevron, { color: theme.textMuted }]}>›</Text>
             </TouchableOpacity>
             <View style={[styles.settingsDivider, { backgroundColor: theme.surface }]} />
@@ -1859,6 +1885,16 @@ export default function App() {
 
           <View style={styles.settingsFooter} />
         </ScrollView>
+      )}
+
+      {/* Undo Toast */}
+      {showUndoToast && (
+        <View style={styles.undoToast}>
+          <Text style={styles.undoToastText}>Alarm deleted</Text>
+          <TouchableOpacity onPress={undoDelete}>
+            <Text style={styles.undoButton}>Undo</Text>
+          </TouchableOpacity>
+        </View>
       )}
 
       {/* Bottom Tab Bar */}
@@ -1951,6 +1987,7 @@ export default function App() {
                 minute={selectedMinute}
                 onHourChange={setSelectedHour}
                 onMinuteChange={setSelectedMinute}
+                hapticFeedback={settings.hapticFeedback}
               />
 
               <View style={styles.repeatSection}>
@@ -2360,6 +2397,7 @@ export default function App() {
               onHourChange={setBedtimeHour}
               onMinuteChange={setBedtimeMinute}
               minuteStep={5}
+              hapticFeedback={settings.hapticFeedback}
             />
 
             <TouchableOpacity style={styles.saveBedtimeButton} onPress={handleSaveBedtime}>
@@ -2650,9 +2688,6 @@ const styles = StyleSheet.create({
     color: '#444444',
     paddingHorizontal: 24,
   },
-  swipeableContainer: {
-    overflow: 'visible',
-  },
   alarmItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2686,16 +2721,35 @@ const styles = StyleSheet.create({
   alarmDaysDisabled: {
     color: '#333333',
   },
-  deleteAction: {
-    backgroundColor: '#6366F1',
-    justifyContent: 'center',
-    alignItems: 'flex-end',
-    paddingHorizontal: 24,
+  undoToast: {
+    position: 'absolute',
+    bottom: 100,
+    left: 24,
+    right: 24,
+    backgroundColor: '#333333',
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    zIndex: 1000,
   },
-  deleteText: {
+  undoToastText: {
     color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  undoButton: {
+    color: '#818CF8',
+    fontSize: 15,
+    fontWeight: '700',
+    textTransform: 'uppercase',
   },
   tabContent: {
     flex: 1,
