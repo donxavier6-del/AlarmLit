@@ -28,8 +28,8 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Run ESLint
-        run: npm run lint
+        run: npm run lint --if-present
+        continue-on-error: true  # ESLint not yet configured
 
       - name: Run Tests
         run: npm test
-        continue-on-error: true  # Tests are WIP, don't fail CI yet
