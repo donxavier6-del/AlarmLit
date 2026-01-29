@@ -42,6 +42,7 @@ import {
   formatTimeDisplay,
 } from './src/utils/timeFormatting';
 import { InsightsChart } from './src/components/InsightsChart';
+import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { SettingsPanel } from './src/components/SettingsPanel';
 
 // Check if running in Expo Go (where push notifications are not supported in SDK 53+)
@@ -1490,6 +1491,7 @@ export default function App() {
 
   return (
     <GestureHandlerRootView style={styles.container}>
+      <ErrorBoundary>
       <LinearGradient colors={[...theme.gradient]} style={styles.container}>
       <StatusBar style={settings.darkMode ? 'light' : 'dark'} />
 
@@ -2365,6 +2367,7 @@ export default function App() {
         </View>
       </Modal>
     </LinearGradient>
+      </ErrorBoundary>
     </GestureHandlerRootView>
   );
 }
