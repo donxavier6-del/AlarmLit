@@ -41,7 +41,7 @@ const mockCreateAsync = jest.fn((source, options) => {
 jest.mock('expo-av', () => ({
   Audio: {
     Sound: {
-      createAsync: (...args: any[]) => mockCreateAsync(...args),
+      createAsync: (source: any, options?: any) => mockCreateAsync(source, options),
     },
     setAudioModeAsync: jest.fn(() => Promise.resolve()),
   },
