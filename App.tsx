@@ -44,6 +44,7 @@ import {
 import { InsightsChart } from './src/components/InsightsChart';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { SettingsPanel } from './src/components/SettingsPanel';
+import { AlarmsList } from './src/components/AlarmsList';
 
 // Check if running in Expo Go (where push notifications are not supported in SDK 53+)
 const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
@@ -1253,17 +1254,6 @@ export default function App() {
     setEditingAlarmId(null);
   };
 
-  const getRepeatText = (days: boolean[]) => {
-    if (days.every((d) => !d)) return 'Once';
-    if (days.every((d) => d)) return 'Every day';
-    if (days.slice(1, 6).every((d) => d) && !days[0] && !days[6]) return 'Weekdays';
-    if (days[0] && days[6] && days.slice(1, 6).every((d) => !d)) return 'Weekends';
-    return days
-      .map((selected, i) => (selected ? DAYS[i] : null))
-      .filter(Boolean)
-      .join(', ');
-  };
-
   const toggleAlarm = (id: string) => {
     setAlarms(alarms.map((alarm) =>
       alarm.id === id ? { ...alarm, enabled: !alarm.enabled } : alarm
@@ -1477,18 +1467,6 @@ export default function App() {
     };
   };
 
-  const SWIPE_THRESHOLD = 80;
-
-  const createSwipeHandler = (alarmId: string) => {
-    return (event: PanGestureHandlerGestureEvent) => {
-      const { translationX, translationY } = event.nativeEvent;
-      // Swipe left (negative X) or swipe down (positive Y) to delete
-      if (translationX < -SWIPE_THRESHOLD || translationY > SWIPE_THRESHOLD) {
-        deleteAlarm(alarmId);
-      }
-    };
-  };
-
   return (
     <GestureHandlerRootView style={styles.container}>
       <ErrorBoundary>
@@ -1527,50 +1505,14 @@ export default function App() {
 
           <View style={styles.alarmsContainer}>
             <Text style={[styles.sectionTitle, { color: theme.textMuted }]}>Alarms</Text>
-            {alarms.length === 0 ? (
-              <Text style={[styles.noAlarmsText, { color: theme.textMuted }]}>No alarms set</Text>
-            ) : (
-              <ScrollView style={styles.alarmsList} showsVerticalScrollIndicator={false}>
-                {alarms.map((alarm) => (
-                  <PanGestureHandler
-                    key={alarm.id}
-                    onEnded={createSwipeHandler(alarm.id)}
-                    activeOffsetX={[-20, 20]}
-                    activeOffsetY={[-20, 20]}
-                  >
-                    <View style={[styles.alarmItem, { backgroundColor: theme.card }]}>
-                      <TouchableOpacity
-                        style={styles.alarmInfo}
-                        onPress={() => handleEditAlarm(alarm)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={[
-                          styles.alarmTime,
-                          { color: theme.text },
-                          !alarm.enabled && { color: theme.textDisabled },
-                        ]}>
-                          {formatTimeWithPeriod(alarm.hour, alarm.minute)}
-                        </Text>
-                        <Text style={[
-                          styles.alarmDays,
-                          { color: theme.textMuted },
-                          !alarm.enabled && { color: theme.textDisabled },
-                        ]}>
-                          {alarm.label ? `${alarm.label} · ` : ''}{getRepeatText(alarm.days)}
-                          {alarm.wakeIntensity && alarm.wakeIntensity !== 'energetic' ? ` · ${alarm.wakeIntensity.charAt(0).toUpperCase() + alarm.wakeIntensity.slice(1)}` : ''}
-                        </Text>
-                      </TouchableOpacity>
-                      <Switch
-                        value={alarm.enabled}
-                        onValueChange={() => toggleAlarm(alarm.id)}
-                        trackColor={{ false: theme.switchTrackOff, true: theme.accent }}
-                        thumbColor={alarm.enabled ? '#FFFFFF' : theme.switchThumbOff}
-                      />
-                    </View>
-                  </PanGestureHandler>
-                ))}
-              </ScrollView>
-            )}
+            <AlarmsList
+              alarms={alarms}
+              theme={theme}
+              onToggleAlarm={toggleAlarm}
+              onEditAlarm={handleEditAlarm}
+              onDeleteAlarm={deleteAlarm}
+              formatAlarmTime={formatTimeWithPeriod}
+            />
           </View>
 
           <TouchableOpacity style={[styles.addButton, { backgroundColor: theme.accent }]} onPress={handleAddAlarm}>
