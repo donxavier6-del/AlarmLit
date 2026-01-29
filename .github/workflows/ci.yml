@@ -28,8 +28,15 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Run ESLint
-        run: npm run lint --if-present
-        continue-on-error: true  # ESLint not yet configured
+        run: npm run lint
+        continue-on-error: true  # Warnings expected, don't fail CI
 
-      - name: Run Tests
-        run: npm test
+      - name: Run Tests with Coverage
+        run: npm run test:coverage
+
+      - name: Upload Coverage Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
