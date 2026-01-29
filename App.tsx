@@ -31,9 +31,9 @@ import {
   SOUND_OPTIONS,
   DISMISS_OPTIONS,
   DAYS,
-  AFFIRMATIONS,
   SLEEP_GOAL_OPTIONS,
 } from './src/constants/options';
+import { THEMES } from './src/constants/themes';
 import {
   formatTimeHHMM,
   formatTimeWithPeriod,
@@ -89,65 +89,9 @@ if (!isExpoGo) {
   }
 }
 
-type MathProblem = {
-  question: string;
-  answer: number;
-};
-
-const SHAKE_THRESHOLD = 1.5;
+// Display constants for alarm dismiss UI
 const REQUIRED_SHAKES = 20;
 const BREATHING_CYCLES_REQUIRED = 3;
-const STORAGE_KEY = '@softwake_alarms';
-const SLEEP_STORAGE_KEY = '@softwake_sleep_data';
-const SETTINGS_STORAGE_KEY = '@softwake_settings';
-
-const DEFAULT_SETTINGS: Settings = {
-  bedtimeReminderEnabled: false,
-  bedtimeHour: 22,
-  bedtimeMinute: 0,
-  defaultWakeIntensity: 'energetic',
-  defaultSound: 'sunrise',
-  defaultDismissType: 'simple',
-  sleepGoalHours: 8,
-  darkMode: true,
-  hapticFeedback: true,
-};
-
-// Theme colors
-const THEMES = {
-  dark: {
-    gradient: ['#0a0a1a', '#1a1a2e', '#0f0f23'] as const,
-    alarmGradient: ['#1a1a3e', '#2d1b69', '#1a3a5c'] as const,
-    background: '#0D0D0D',
-    card: '#1A1A1A',
-    cardAlt: '#141414',
-    surface: '#2A2A2A',
-    text: '#FFFFFF',
-    textMuted: '#9999AA',
-    textDisabled: '#666666',
-    accent: '#818CF8',
-    accentAlt: '#6366F1',
-    switchTrackOff: '#2A2A2A',
-    switchThumbOff: '#666666',
-  },
-  light: {
-    gradient: ['#f0f4ff', '#e8eeff', '#f5f7ff'] as const,
-    alarmGradient: ['#c7d2fe', '#a5b4fc', '#93c5fd'] as const,
-    background: '#FFFFFF',
-    card: '#F5F5F7',
-    cardAlt: '#FAFAFA',
-    surface: '#E5E5EA',
-    text: '#1C1C1E',
-    textMuted: '#6B6B7A',
-    textDisabled: '#AEAEB2',
-    accent: '#6366F1',
-    accentAlt: '#818CF8',
-    switchTrackOff: '#E5E5EA',
-    switchThumbOff: '#FFFFFF',
-  },
-};
-
-// generateMathProblem is now in src/utils/mathProblem.ts, used by useAlarmDismiss hook
 
 export default function App() {
   // === HOOKS ===
@@ -549,7 +493,7 @@ export default function App() {
   return (
     <GestureHandlerRootView style={styles.container}>
       <ErrorBoundary>
-      <LinearGradient colors={[...theme.gradient]} style={styles.container}>
+      <LinearGradient colors={theme.gradient as [string, string, string]} style={styles.container}>
       <StatusBar style={settings.darkMode ? 'light' : 'dark'} />
 
       {/* Tab Content */}
