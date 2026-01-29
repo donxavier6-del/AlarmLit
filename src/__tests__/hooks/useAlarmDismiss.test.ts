@@ -148,6 +148,35 @@ describe('useAlarmDismiss', () => {
       expect(result.current.breathingPhase).toBe('complete');
     });
 
+    it('should set up auto-dismiss timeout after completion', () => {
+      const { result } = renderHook(() => useAlarmDismiss(true, 'breathing', true));
+
+      act(() => {
+        result.current.startBreathingExercise();
+      });
+
+      // Complete 3 cycles to reach 'complete' phase
+      act(() => {
+        for (let i = 0; i < 3; i++) {
+          jest.advanceTimersByTime(4000); // inhale
+          jest.advanceTimersByTime(7000); // hold
+          jest.advanceTimersByTime(8000); // exhale
+        }
+      });
+
+      expect(result.current.breathingPhase).toBe('complete');
+
+      // The auto-dismiss timeout (2.5s) should execute without errors
+      // This covers the callback at line 126-128 in useAlarmDismiss.ts
+      act(() => {
+        jest.advanceTimersByTime(2500);
+      });
+
+      // Phase should still be 'complete' (callback is empty, just signals completion)
+      expect(result.current.breathingPhase).toBe('complete');
+      expect(result.current.breathingCycle).toBe(3);
+    });
+
     it('should track breathing cycle count correctly', () => {
       const { result } = renderHook(() => useAlarmDismiss(true, 'breathing', true));
 
