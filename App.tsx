@@ -45,6 +45,7 @@ import { InsightsChart } from './src/components/InsightsChart';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { SettingsPanel } from './src/components/SettingsPanel';
 import { AlarmsList } from './src/components/AlarmsList';
+import { AlarmEditor } from './src/components/AlarmEditor';
 
 // Check if running in Expo Go (where push notifications are not supported in SDK 53+)
 const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
@@ -1647,237 +1648,36 @@ export default function App() {
         </TouchableOpacity>
       </View>
 
-      {/* Add Alarm Modal */}
-      <Modal
-        animationType="slide"
-        transparent={true}
+      <AlarmEditor
         visible={modalVisible}
-        onRequestClose={() => {
+        editingAlarmId={editingAlarmId}
+        theme={theme}
+        settings={settings}
+        selectedHour={selectedHour}
+        selectedMinute={selectedMinute}
+        onHourChange={setSelectedHour}
+        onMinuteChange={setSelectedMinute}
+        selectedDays={selectedDays}
+        onToggleDay={toggleDay}
+        selectedLabel={selectedLabel}
+        onLabelChange={setSelectedLabel}
+        selectedSnooze={selectedSnooze}
+        onSnoozeChange={setSelectedSnooze}
+        selectedWakeIntensity={selectedWakeIntensity}
+        onWakeIntensityChange={setSelectedWakeIntensity}
+        selectedSound={selectedSound}
+        onSoundChange={setSelectedSound}
+        selectedDismissType={selectedDismissType}
+        onDismissTypeChange={setSelectedDismissType}
+        onSave={handleSaveAlarm}
+        onCancel={() => {
           stopPreviewSound();
           setModalVisible(false);
           setEditingAlarmId(null);
         }}
-      >
-        <View style={styles.modalOverlay}>
-          <ScrollView style={styles.modalScroll}>
-            <View style={styles.modalContent}>
-              <View style={styles.modalHeader}>
-                <TouchableOpacity onPress={() => {
-                  stopPreviewSound();
-                  setModalVisible(false);
-                  setEditingAlarmId(null);
-                }}>
-                  <Text style={styles.cancelButton}>Cancel</Text>
-                </TouchableOpacity>
-                <Text style={styles.modalTitle}>
-                  {editingAlarmId ? 'Edit Alarm' : 'New Alarm'}
-                </Text>
-                <TouchableOpacity onPress={handleSaveAlarm}>
-                  <Text style={styles.saveButton}>Save</Text>
-                </TouchableOpacity>
-              </View>
-
-              <TimePicker
-                hour={selectedHour}
-                minute={selectedMinute}
-                onHourChange={setSelectedHour}
-                onMinuteChange={setSelectedMinute}
-                hapticFeedback={settings.hapticFeedback}
-              />
-
-              <View style={styles.repeatSection}>
-                <Text style={styles.repeatLabel}>Repeat</Text>
-                <View style={styles.daysContainer}>
-                  {DAYS.map((day, index) => (
-                    <TouchableOpacity
-                      key={day}
-                      onPress={() => toggleDay(index)}
-                      style={[
-                        styles.dayButton,
-                        selectedDays[index] && styles.dayButtonSelected,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.dayText,
-                          selectedDays[index] && styles.dayTextSelected,
-                        ]}
-                      >
-                        {day[0]}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              <View style={styles.labelSection}>
-                <Text style={styles.labelTitle}>Label</Text>
-                <TextInput
-                  style={styles.labelInput}
-                  value={selectedLabel}
-                  onChangeText={setSelectedLabel}
-                  placeholder="Alarm"
-                  placeholderTextColor="#444444"
-                />
-              </View>
-
-              <View style={styles.snoozeSection}>
-                <Text style={styles.snoozeTitle}>Snooze</Text>
-                <View style={styles.snoozeOptions}>
-                  {SNOOZE_OPTIONS.map((option) => (
-                    <TouchableOpacity
-                      key={option.value}
-                      onPress={() => setSelectedSnooze(option.value)}
-                      style={[
-                        styles.snoozeOption,
-                        selectedSnooze === option.value && styles.snoozeOptionSelected,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.snoozeOptionText,
-                          selectedSnooze === option.value && styles.snoozeOptionTextSelected,
-                        ]}
-                      >
-                        {option.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              <View style={styles.wakeIntensitySection}>
-                <View style={styles.wakeIntensityHeader}>
-                  <Text style={styles.wakeIntensityTitle}>Wake Intensity</Text>
-                  <TouchableOpacity
-                    onPress={playPreviewSound}
-                    style={styles.previewButton}
-                  >
-                    <Text style={styles.previewButtonIcon}>🔊</Text>
-                  </TouchableOpacity>
-                </View>
-                <View style={styles.wakeIntensityOptions}>
-                  {WAKE_INTENSITY_OPTIONS.map((option) => (
-                    <TouchableOpacity
-                      key={option.value}
-                      onPress={() => setSelectedWakeIntensity(option.value)}
-                      style={[
-                        styles.wakeIntensityOption,
-                        selectedWakeIntensity === option.value && styles.wakeIntensityOptionSelected,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.wakeIntensityOptionText,
-                          selectedWakeIntensity === option.value && styles.wakeIntensityOptionTextSelected,
-                        ]}
-                      >
-                        {option.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              <View style={styles.soundSection}>
-                <Text style={styles.soundTitle}>Sound</Text>
-                <View style={styles.soundOptions}>
-                  {SOUND_OPTIONS.map((option) => (
-                    <TouchableOpacity
-                      key={option.value}
-                      onPress={() => setSelectedSound(option.value)}
-                      style={[
-                        styles.soundOption,
-                        selectedSound === option.value && styles.soundOptionSelected,
-                      ]}
-                    >
-                      <Text style={styles.soundOptionIcon}>{option.icon}</Text>
-                      <Text
-                        style={[
-                          styles.soundOptionText,
-                          selectedSound === option.value && styles.soundOptionTextSelected,
-                        ]}
-                      >
-                        {option.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              <View style={styles.dismissTypeSection}>
-                <Text style={styles.dismissTypeTitle}>Dismiss Method</Text>
-                <View style={styles.dismissTypeOptions}>
-                  {DISMISS_OPTIONS.filter(o => !o.isMission).map((option) => (
-                    <TouchableOpacity
-                      key={option.value}
-                      onPress={() => setSelectedDismissType(option.value)}
-                      style={[
-                        styles.dismissTypeOption,
-                        selectedDismissType === option.value && styles.dismissTypeOptionSelected,
-                      ]}
-                    >
-                      <Text style={styles.dismissTypeIcon}>{option.icon}</Text>
-                      <View style={styles.dismissTypeTextContainer}>
-                        <Text
-                          style={[
-                            styles.dismissTypeLabel,
-                            selectedDismissType === option.value && styles.dismissTypeLabelSelected,
-                          ]}
-                        >
-                          {option.label}
-                        </Text>
-                        <Text
-                          style={[
-                            styles.dismissTypeDescription,
-                            selectedDismissType === option.value && styles.dismissTypeDescriptionSelected,
-                          ]}
-                        >
-                          {option.description}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <Text style={styles.missionsSubtitle}>Wake-up Missions</Text>
-                <Text style={styles.missionsHint}>Optional challenges to help you wake up</Text>
-                <View style={styles.dismissTypeOptions}>
-                  {DISMISS_OPTIONS.filter(o => o.isMission).map((option) => (
-                    <TouchableOpacity
-                      key={option.value}
-                      onPress={() => setSelectedDismissType(option.value)}
-                      style={[
-                        styles.dismissTypeOption,
-                        selectedDismissType === option.value && styles.dismissTypeOptionSelected,
-                      ]}
-                    >
-                      <Text style={styles.dismissTypeIcon}>{option.icon}</Text>
-                      <View style={styles.dismissTypeTextContainer}>
-                        <Text
-                          style={[
-                            styles.dismissTypeLabel,
-                            selectedDismissType === option.value && styles.dismissTypeLabelSelected,
-                          ]}
-                        >
-                          {option.label}
-                        </Text>
-                        <Text
-                          style={[
-                            styles.dismissTypeDescription,
-                            selectedDismissType === option.value && styles.dismissTypeDescriptionSelected,
-                          ]}
-                        >
-                          {option.description}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            </View>
-          </ScrollView>
-        </View>
-      </Modal>
+        onPlayPreview={playPreviewSound}
+        TimePicker={TimePicker}
+      />
 
       {/* Alarm Dismiss Screen */}
       <Modal
