@@ -14,6 +14,7 @@ import {
   AppState,
   Alert,
 } from 'react-native';
+import type { Alarm, SleepEntry, Settings, AlarmSound, DismissType, WakeIntensity, TabName, WeeklyDataPoint, SleepStatsResult } from './src/types';
 import { GestureHandlerRootView, PanGestureHandler, PanGestureHandlerGestureEvent } from 'react-native-gesture-handler';
 import WheelPicker from 'react-native-wheel-scrollview-picker';
 import * as Haptics from 'expo-haptics';
@@ -40,6 +41,7 @@ import {
   formatTimeObject,
   formatTimeDisplay,
 } from './src/utils/timeFormatting';
+import { InsightsChart } from './src/components/InsightsChart';
 
 // Check if running in Expo Go (where push notifications are not supported in SDK 53+)
 const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
@@ -71,46 +73,9 @@ if (!isExpoGo) {
   }
 }
 
-type AlarmSound = 'sunrise' | 'ocean' | 'forest' | 'chimes' | 'piano' | 'birds';
-type DismissType = 'simple' | 'breathing' | 'affirmation' | 'math' | 'shake';
-type WakeIntensity = 'whisper' | 'gentle' | 'moderate' | 'energetic';
-type TabName = 'alarms' | 'morning' | 'insights' | 'settings';
-
-type Alarm = {
-  id: string;
-  hour: number;
-  minute: number;
-  days: boolean[];
-  enabled: boolean;
-  label: string;
-  snooze: number;
-  wakeIntensity: WakeIntensity;
-  sound: AlarmSound;
-  dismissType: DismissType;
-};
-
 type MathProblem = {
   question: string;
   answer: number;
-};
-
-type SleepEntry = {
-  id: string;
-  bedtime: number; // timestamp
-  wakeTime: number; // timestamp
-  sleepDuration: number; // minutes
-};
-
-type Settings = {
-  bedtimeReminderEnabled: boolean;
-  bedtimeHour: number;
-  bedtimeMinute: number;
-  defaultWakeIntensity: WakeIntensity;
-  defaultSound: AlarmSound;
-  defaultDismissType: DismissType;
-  sleepGoalHours: number;
-  darkMode: boolean;
-  hapticFeedback: boolean;
 };
 
 const SHAKE_THRESHOLD = 1.5;
@@ -874,6 +839,20 @@ export default function App() {
     setActiveAlarm(null);
   };
 
+  // Cleanup breathing timer when alarm screen is hidden or component unmounts
+  useEffect(() => {
+    if (!alarmScreenVisible && breathingTimerRef.current) {
+      clearTimeout(breathingTimerRef.current);
+      breathingTimerRef.current = null;
+    }
+    return () => {
+      if (breathingTimerRef.current) {
+        clearTimeout(breathingTimerRef.current);
+        breathingTimerRef.current = null;
+      }
+    };
+  }, [alarmScreenVisible]);
+
   const handleAffirmationChange = async (text: string) => {
     setAffirmationText(text);
     if (text.toLowerCase().trim() === targetAffirmation.toLowerCase()) {
@@ -1030,14 +1009,32 @@ export default function App() {
   };
 
   const previewSoundRef = useRef<Audio.Sound | null>(null);
+  const previewTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isPreviewPlayingRef = useRef<boolean>(false);
 
-  const playPreviewSound = async () => {
-    // Stop any existing preview
+  const stopPreviewSound = async () => {
+    if (previewTimeoutRef.current) {
+      clearTimeout(previewTimeoutRef.current);
+      previewTimeoutRef.current = null;
+    }
     if (previewSoundRef.current) {
-      await previewSoundRef.current.stopAsync();
-      await previewSoundRef.current.unloadAsync();
+      try {
+        await previewSoundRef.current.stopAsync();
+        await previewSoundRef.current.unloadAsync();
+      } catch (e) {
+        // Sound may already be stopped/unloaded
+      }
       previewSoundRef.current = null;
     }
+    isPreviewPlayingRef.current = false;
+  };
+
+  const playPreviewSound = async () => {
+    // Prevent concurrent calls
+    if (isPreviewPlayingRef.current) {
+      await stopPreviewSound();
+    }
+    isPreviewPlayingRef.current = true;
 
     try {
       const intensityOption = WAKE_INTENSITY_OPTIONS.find(o => o.value === selectedWakeIntensity);
@@ -1057,15 +1054,12 @@ export default function App() {
       await sound.playAsync();
 
       // Stop after 2 seconds
-      setTimeout(async () => {
-        if (previewSoundRef.current) {
-          await previewSoundRef.current.stopAsync();
-          await previewSoundRef.current.unloadAsync();
-          previewSoundRef.current = null;
-        }
+      previewTimeoutRef.current = setTimeout(async () => {
+        await stopPreviewSound();
       }, 2000);
     } catch (error) {
       console.log('Error playing preview:', error);
+      isPreviewPlayingRef.current = false;
     }
   };
 
@@ -1210,7 +1204,7 @@ export default function App() {
   };
 
   const handleSaveAlarm = () => {
-    if (previewSoundRef.current) { previewSoundRef.current.stopAsync(); previewSoundRef.current.unloadAsync(); previewSoundRef.current = null; }
+    stopPreviewSound();
     if (editingAlarmId) {
       // Update existing alarm
       setAlarms(alarms.map((alarm) =>
@@ -1312,9 +1306,9 @@ export default function App() {
     return `${hours}h ${mins}m`;
   };
 
-  const getWeeklyData = () => {
+  const getWeeklyData = (): WeeklyDataPoint[] => {
     const now = new Date();
-    const weekData: { day: string; duration: number; date: Date }[] = [];
+    const weekData: WeeklyDataPoint[] = [];
 
     // Get last 7 days
     for (let i = 6; i >= 0; i--) {
@@ -1341,7 +1335,7 @@ export default function App() {
     return weekData;
   };
 
-  const getSleepStats = () => {
+  const getSleepStats = (): SleepStatsResult | null => {
     if (sleepData.length === 0) {
       return null;
     }
@@ -1614,56 +1608,13 @@ export default function App() {
       )}
 
       {activeTab === 'insights' && (
-        <ScrollView style={styles.insightsContainer} showsVerticalScrollIndicator={false}>
-          <Text style={[styles.insightsTitle, { color: theme.text }]}>Sleep Insights</Text>
-
-          {/* Weekly Sleep Chart */}
-          <View style={[styles.insightsCard, { backgroundColor: theme.card }]}>
-            <Text style={[styles.insightsCardLabel, { color: theme.textMuted }]}>This Week</Text>
-            <View style={styles.insightsChart}>
-              {[
-                { day: 'M', hrs: 7.5 },
-                { day: 'T', hrs: 6.2 },
-                { day: 'W', hrs: 7.8 },
-                { day: 'T', hrs: 5.5 },
-                { day: 'F', hrs: 7.0 },
-                { day: 'S', hrs: 8.2 },
-                { day: 'S', hrs: 7.0 },
-              ].map((d, i) => (
-                <View key={i} style={styles.insightsBarCol}>
-                  <View style={[styles.insightsBarTrack, { backgroundColor: theme.surface }]}>
-                    <View style={[styles.insightsBar, { height: `${(d.hrs / 10) * 100}%`, backgroundColor: theme.accent }]} />
-                  </View>
-                  <Text style={[styles.insightsBarLabel, { color: theme.textMuted }]}>{d.day}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-
-          {/* Stats Row */}
-          <View style={styles.insightsStatsRow}>
-            <View style={[styles.insightsStatBox, { backgroundColor: theme.card }]}>
-              <Text style={[styles.insightsStatValue, { color: theme.text }]}>7.2 hrs</Text>
-              <Text style={[styles.insightsStatLabel, { color: theme.textMuted }]}>Avg Sleep</Text>
-            </View>
-            <View style={[styles.insightsStatBox, { backgroundColor: theme.card }]}>
-              <Text style={[styles.insightsStatValue, { color: theme.text }]}>8 hrs</Text>
-              <Text style={[styles.insightsStatLabel, { color: theme.textMuted }]}>Sleep Goal</Text>
-            </View>
-          </View>
-
-          {/* Sleep Debt Card */}
-          <View style={[styles.insightsCard, { backgroundColor: theme.card }]}>
-            <Text style={[styles.insightsCardLabel, { color: theme.textMuted }]}>Sleep Debt</Text>
-            <Text style={[styles.insightsCardValue, { color: theme.text }]}>You're 5.6 hrs behind this week</Text>
-          </View>
-
-          {/* Tip Card */}
-          <View style={[styles.insightsCard, styles.insightsTipCard, { backgroundColor: theme.accentAlt }]}>
-            <Text style={styles.insightsTipLabel}>Tip</Text>
-            <Text style={styles.insightsTipText}>Try going to bed 15 minutes earlier tonight</Text>
-          </View>
-        </ScrollView>
+        <InsightsChart
+          sleepData={sleepData}
+          settings={settings}
+          theme={theme}
+          getWeeklyData={getWeeklyData}
+          getSleepStats={getSleepStats}
+        />
       )}
 
       {activeTab === 'settings' && (
@@ -1923,7 +1874,7 @@ export default function App() {
         transparent={true}
         visible={modalVisible}
         onRequestClose={() => {
-          if (previewSoundRef.current) { previewSoundRef.current.stopAsync(); previewSoundRef.current.unloadAsync(); previewSoundRef.current = null; }
+          stopPreviewSound();
           setModalVisible(false);
           setEditingAlarmId(null);
         }}
@@ -1933,7 +1884,7 @@ export default function App() {
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
                 <TouchableOpacity onPress={() => {
-                  if (previewSoundRef.current) { previewSoundRef.current.stopAsync(); previewSoundRef.current.unloadAsync(); previewSoundRef.current = null; }
+                  stopPreviewSound();
                   setModalVisible(false);
                   setEditingAlarmId(null);
                 }}>
