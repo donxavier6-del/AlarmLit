@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { ScrollView, View, Text, TouchableOpacity, Switch, StyleSheet } from 'react-native';
-import { PanGestureHandler, PanGestureHandlerGestureEvent } from 'react-native-gesture-handler';
+import { PanGestureHandler, HandlerStateChangeEvent } from 'react-native-gesture-handler';
 import { DAYS } from '../constants/options';
 import type { Alarm, Theme } from '../types';
 
@@ -40,8 +40,8 @@ export function AlarmsList({
   };
 
   const createSwipeHandler = (alarmId: string) => {
-    return (event: PanGestureHandlerGestureEvent) => {
-      const { translationX, translationY } = event.nativeEvent;
+    return (event: HandlerStateChangeEvent<Record<string, unknown>>) => {
+      const { translationX, translationY } = event.nativeEvent as unknown as { translationX: number; translationY: number };
       // Swipe left (negative X) or swipe down (positive Y) to delete
       if (translationX < -SWIPE_THRESHOLD || translationY > SWIPE_THRESHOLD) {
         onDeleteAlarm(alarmId);
