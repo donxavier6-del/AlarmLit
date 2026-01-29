@@ -37,13 +37,13 @@ import {
 import {
   formatTimeHHMM,
   formatTimeWithPeriod,
-  formatTimeObject,
   formatTimeDisplay,
 } from './src/utils/timeFormatting';
 import { InsightsChart } from './src/components/InsightsChart';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { SettingsPanel } from './src/components/SettingsPanel';
 import { AlarmsList } from './src/components/AlarmsList';
+import { AlarmsTab } from './src/components/AlarmsTab';
 import { AlarmEditor } from './src/components/AlarmEditor';
 import { TimePicker } from './src/components/TimePicker';
 import { useAlarms } from './src/hooks/useAlarms';
@@ -738,63 +738,6 @@ export default function App() {
     setActiveAlarm(null);
   };
 
-  const { time, ampm } = formatTimeObject(currentTime);
-
-  const getNextAlarmCountdown = (): { hours: number; minutes: number } | null => {
-    const enabledAlarms = alarms.filter(a => a.enabled);
-    if (enabledAlarms.length === 0) return null;
-
-    const now = currentTime;
-    let minDiff = Infinity;
-
-    for (const alarm of enabledAlarms) {
-      if (alarm.days.some(d => d)) {
-        for (let i = 0; i < 7; i++) {
-          const dayIndex = (now.getDay() + i) % 7;
-          if (alarm.days[dayIndex]) {
-            const candidate = new Date(now);
-            candidate.setDate(now.getDate() + i);
-            candidate.setHours(alarm.hour, alarm.minute, 0, 0);
-            if (candidate.getTime() > now.getTime()) {
-              const diff = candidate.getTime() - now.getTime();
-              if (diff < minDiff) minDiff = diff;
-              break;
-            }
-          }
-        }
-      } else {
-        const alarmDate = new Date(now);
-        alarmDate.setHours(alarm.hour, alarm.minute, 0, 0);
-        if (alarmDate.getTime() <= now.getTime()) {
-          alarmDate.setDate(alarmDate.getDate() + 1);
-        }
-        const diff = alarmDate.getTime() - now.getTime();
-        if (diff < minDiff) minDiff = diff;
-      }
-    }
-
-    if (minDiff === Infinity) return null;
-
-    const totalMinutes = Math.floor(minDiff / 60000);
-    return {
-      hours: Math.floor(totalMinutes / 60),
-      minutes: totalMinutes % 60,
-    };
-  };
-
-  const formatCountdownText = (): string => {
-    const countdown = getNextAlarmCountdown();
-    if (!countdown) return '';
-    const { hours, minutes } = countdown;
-    if (hours > 0 && minutes > 0) {
-      return `${hours} hr ${minutes} min of rest ahead`;
-    } else if (hours > 0) {
-      return `${hours} hour${hours !== 1 ? 's' : ''} of rest ahead`;
-    } else {
-      return `${minutes} min of rest ahead`;
-    }
-  };
-
   // Wrapper functions that pass app-specific context to hook functions
   const handleAddAlarmWithDefaults = () => {
     handleAddAlarm({
@@ -890,50 +833,17 @@ export default function App() {
 
       {/* Tab Content */}
       {activeTab === 'alarms' && (
-        <View style={styles.tabContent}>
-          <View style={styles.clockContainer}>
-            <Text style={[styles.timeText, { color: theme.text }]}>{time}</Text>
-            <Text style={[styles.ampmText, { color: theme.textMuted }]}>{ampm}</Text>
-          </View>
-
-          <Text style={[styles.dateText, { color: theme.textMuted }]}>
-            {currentTime.toLocaleDateString('en-US', {
-              weekday: 'long',
-              month: 'long',
-              day: 'numeric',
-            })}
-          </Text>
-
-          <View style={styles.countdownContainer}>
-            {alarms.some(a => a.enabled) ? (
-              <>
-                <Text style={[styles.countdownIcon, { color: theme.textMuted }]}>☽</Text>
-                <Text style={[styles.countdownText, { color: theme.textMuted }]}>{formatCountdownText()}</Text>
-              </>
-            ) : (
-              <>
-                <Text style={[styles.countdownIcon, { color: theme.textMuted }]}>☁</Text>
-                <Text style={[styles.countdownText, { color: theme.textMuted }]}>No alarms set – sleep well tonight</Text>
-              </>
-            )}
-          </View>
-
-          <View style={styles.alarmsContainer}>
-            <Text style={[styles.sectionTitle, { color: theme.textMuted }]}>Alarms</Text>
-            <AlarmsList
-              alarms={alarms}
-              theme={theme}
-              onToggleAlarm={toggleAlarm}
-              onEditAlarm={handleEditAlarm}
-              onDeleteAlarm={deleteAlarmWithHaptics}
-              formatAlarmTime={formatTimeWithPeriod}
-            />
-          </View>
-
-          <TouchableOpacity style={[styles.addButton, { backgroundColor: theme.accent }]} onPress={handleAddAlarmWithDefaults}>
-            <Text style={styles.addButtonText}>+</Text>
-          </TouchableOpacity>
-        </View>
+        <AlarmsTab
+          alarms={alarms}
+          currentTime={currentTime}
+          theme={theme}
+          showUndoToast={showUndoToast}
+          onAddAlarm={handleAddAlarmWithDefaults}
+          onEditAlarm={handleEditAlarm}
+          onToggleAlarm={toggleAlarm}
+          onDeleteAlarm={deleteAlarmWithHaptics}
+          onUndoDelete={undoDelete}
+        />
       )}
 
       {activeTab === 'morning' && (
@@ -995,16 +905,6 @@ export default function App() {
           setBedtimePickerVisible={setBedtimePickerVisible}
           TimePicker={TimePicker}
         />
-      )}
-
-      {/* Undo Toast */}
-      {showUndoToast && (
-        <View style={styles.undoToast}>
-          <Text style={styles.undoToastText}>Alarm deleted</Text>
-          <TouchableOpacity onPress={undoDelete}>
-            <Text style={styles.undoButton}>Undo</Text>
-          </TouchableOpacity>
-        </View>
       )}
 
       {/* Bottom Tab Bar */}
