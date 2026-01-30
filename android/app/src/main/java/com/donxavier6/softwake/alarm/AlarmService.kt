@@ -31,7 +31,8 @@ class AlarmService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(NOTIFICATION_ID, buildNotification())
+        val alarmId = intent?.getStringExtra("alarmId")
+        startForeground(NOTIFICATION_ID, buildNotification(alarmId))
 
         acquireWakeLock()
         startVibration()
@@ -75,12 +76,13 @@ class AlarmService : Service() {
         }
     }
 
-    private fun buildNotification(): android.app.Notification {
+    private fun buildNotification(alarmId: String? = null): android.app.Notification {
         createNotificationChannel()
 
         val openAppIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra("fromAlarm", true)
+            putExtra("alarmId", alarmId)
         }
         val openAppPendingIntent = PendingIntent.getActivity(
             this,
@@ -92,6 +94,7 @@ class AlarmService : Service() {
         val fullScreenIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra("fromAlarm", true)
+            putExtra("alarmId", alarmId)
         }
         val fullScreenPendingIntent = PendingIntent.getActivity(
             this,
@@ -200,12 +203,6 @@ class AlarmService : Service() {
         } else {
             android.provider.Settings.System.DEFAULT_ALARM_ALERT_URI
         }
-    }
-
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        Log.d(TAG, "Task removed, stopping service")
-        stopSelf()
-        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {

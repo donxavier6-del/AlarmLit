@@ -23,8 +23,7 @@ import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
-import { nativeAlarm } from './src/services/nativeAlarm';
-import { rescheduleAllAlarms, cleanupExpiredAlarms } from './src/services/alarmStorage';
+import { nativeAlarm, scheduleNativeAlarms } from './src/services/nativeAlarm';
 import {
   SNOOZE_OPTIONS,
   WAKE_INTENSITY_OPTIONS,
@@ -220,22 +219,6 @@ export default function App() {
   // === LOCAL STATE ===
   const [currentTime, setCurrentTime] = useState(new Date());
 
-// Initialize native alarm system
-  useEffect(() => {
-    const initNativeAlarms = async () => {
-      if (Platform.OS !== 'android') return;
-      await rescheduleAllAlarms();
-      await cleanupExpiredAlarms();
-    };
-    initNativeAlarms();
-
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') rescheduleAllAlarms();
-    });
-
-    return () => sub.remove();
-  }, []);
-
   // Sleep insight modal state
   const [sleepInsightVisible, setSleepInsightVisible] = useState(false);
 
@@ -257,6 +240,22 @@ export default function App() {
   useEffect(() => {
     if (!isLoaded) return;
     scheduleAlarmNotificationsService(alarms);
+  }, [alarms, isLoaded]);
+
+  // Schedule native Android alarms whenever alarms change
+  useEffect(() => {
+    if (!isLoaded) return;
+    scheduleNativeAlarms(alarms);
+  }, [alarms, isLoaded]);
+
+  // Re-schedule native alarms when app comes to foreground
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && isLoaded) {
+        scheduleNativeAlarms(alarms);
+      }
+    });
+    return () => sub.remove();
   }, [alarms, isLoaded]);
 
   // Sleep data save is now handled by useSleepTracking hook
@@ -389,6 +388,22 @@ export default function App() {
       notificationResponseSubscription.remove();
     };
   }, [alarms, triggerAlarmWithReset]);
+
+  // Check if app was launched from a native alarm notification tap
+  useEffect(() => {
+    if (!isLoaded || Platform.OS !== 'android') return;
+
+    const checkLaunchAlarm = async () => {
+      const launchAlarmId = await nativeAlarm.getLaunchAlarmId();
+      if (launchAlarmId) {
+        const alarm = alarms.find((a) => a.id === launchAlarmId);
+        if (alarm) {
+          triggerAlarmWithReset(alarm);
+        }
+      }
+    };
+    checkLaunchAlarm();
+  }, [isLoaded]);
 
   // Handle math dismiss - validates answer and triggers dismiss on correct
   const handleMathDismiss = useCallback(() => {

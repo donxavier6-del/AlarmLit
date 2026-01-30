@@ -336,7 +336,7 @@ describe('useAlarmTrigger', () => {
       });
 
       await act(async () => {
-        result.current.snoozeAlarm();
+        await result.current.snoozeAlarm();
       });
 
       expect(mockStopAsync).toHaveBeenCalled();
@@ -353,7 +353,7 @@ describe('useAlarmTrigger', () => {
       expect(result.current.alarmScreenVisible).toBe(true);
 
       await act(async () => {
-        result.current.snoozeAlarm();
+        await result.current.snoozeAlarm();
       });
 
       expect(result.current.alarmScreenVisible).toBe(false);
@@ -368,15 +368,16 @@ describe('useAlarmTrigger', () => {
       });
 
       await act(async () => {
-        result.current.snoozeAlarm();
+        await result.current.snoozeAlarm();
       });
 
-      // Advance time by snooze duration (5 minutes = 300000ms)
+      // Native snooze is attempted first; in tests NativeModules.AlarmModule is undefined
+      // so it falls back to setTimeout. Advance time by snooze duration.
       await act(async () => {
         jest.advanceTimersByTime(5 * 60 * 1000);
       });
 
-      // Should re-trigger the alarm
+      // Should re-trigger the alarm via fallback timer
       await waitFor(() => {
         expect(result.current.alarmScreenVisible).toBe(true);
       });
@@ -391,7 +392,7 @@ describe('useAlarmTrigger', () => {
       });
 
       await act(async () => {
-        result.current.snoozeAlarm();
+        await result.current.snoozeAlarm();
       });
 
       // Alarm should remain active
@@ -403,7 +404,7 @@ describe('useAlarmTrigger', () => {
       const { result } = renderHook(() => useAlarmTrigger([], true));
 
       await act(async () => {
-        result.current.snoozeAlarm();
+        await result.current.snoozeAlarm();
       });
 
       // Should complete without error
@@ -420,7 +421,7 @@ describe('useAlarmTrigger', () => {
       });
 
       await act(async () => {
-        result.current.snoozeAlarm();
+        await result.current.snoozeAlarm();
       });
 
       // Advance time by 9 minutes (should not trigger yet)
@@ -678,7 +679,7 @@ describe('useAlarmTrigger', () => {
       });
 
       await act(async () => {
-        result.current.snoozeAlarm();
+        await result.current.snoozeAlarm();
       });
 
       unmount();

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Audio } from 'expo-av';
 import * as Haptics from 'expo-haptics';
 import { WAKE_INTENSITY_OPTIONS } from '../constants/options';
-import { nativeAlarm } from '../services/nativeAlarm';
+import { nativeAlarm, getSoundResourceName } from '../services/nativeAlarm';
 import type { Alarm, AlarmSound, WakeIntensity } from '../types';
 
 const SOUND_CONFIGS: Record<AlarmSound, { rate: number; pattern: number[] | null }> = {
@@ -23,7 +23,7 @@ interface UseAlarmTriggerReturn {
   triggerAlarm: (alarm: Alarm) => Promise<void>;
   stopAlarmSound: () => Promise<void>;
   dismissAlarm: () => Promise<void>;
-  snoozeAlarm: () => void;
+  snoozeAlarm: () => Promise<void>;
 }
 
 export function useAlarmTrigger(
@@ -202,22 +202,32 @@ export function useAlarmTrigger(
     setActiveAlarm(null);
   }, [stopAlarmSound, onAlarmDismissed]);
 
-  const snoozeAlarm = useCallback(() => {
+  const snoozeAlarm = useCallback(async () => {
     if (!activeAlarm || activeAlarm.snooze === 0) return;
 
     if (patternIntervalRef.current) {
       clearTimeout(patternIntervalRef.current);
       patternIntervalRef.current = null;
     }
-    stopAlarmSound();
+    await stopAlarmSound();
     setAlarmScreenVisible(false);
 
-    // Schedule snooze
-    snoozeTimeoutRef.current = setTimeout(() => {
-      if (activeAlarm) {
-        triggerAlarm(activeAlarm);
-      }
-    }, activeAlarm.snooze * 60 * 1000);
+    // Try native snooze first (survives app kill), fall back to setTimeout
+    const soundResource = getSoundResourceName(activeAlarm.sound);
+    let nativeSnoozeScheduled = false;
+    try {
+      nativeSnoozeScheduled = await nativeAlarm.snoozeAlarm(activeAlarm.snooze, soundResource);
+    } catch (_) {
+      // Native snooze failed
+    }
+
+    if (!nativeSnoozeScheduled) {
+      // Fallback: in-process timer (won't survive app kill)
+      const alarmRef = activeAlarm;
+      snoozeTimeoutRef.current = setTimeout(() => {
+        triggerAlarm(alarmRef);
+      }, activeAlarm.snooze * 60 * 1000);
+    }
 
     setActiveAlarm(null);
   }, [activeAlarm, stopAlarmSound, triggerAlarm]);

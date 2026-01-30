@@ -40,11 +40,11 @@ class AlarmModule(private val reactContext: ReactApplicationContext) :
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                timestamp.toLong(),
-                pendingIntent
-            )
+            // Build a show-intent that opens the app when the user taps the alarm icon in the status bar
+            val showIntent = packageManager(context)
+            val alarmClockInfo = AlarmManager.AlarmClockInfo(timestamp.toLong(), showIntent)
+
+            alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
 
             promise.resolve(true)
         } catch (e: Exception) {
@@ -86,7 +86,7 @@ class AlarmModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun snoozeAlarm(minutes: Int, promise: Promise) {
+    fun snoozeAlarm(minutes: Int, soundName: String, promise: Promise) {
         try {
             val stopIntent = Intent(reactContext, AlarmService::class.java)
             reactContext.stopService(stopIntent)
@@ -94,7 +94,7 @@ class AlarmModule(private val reactContext: ReactApplicationContext) :
             val snoozeTime = System.currentTimeMillis() + (minutes * 60 * 1000L)
             val intent = Intent(reactContext, AlarmReceiver::class.java).apply {
                 putExtra("alarmId", "snooze_${System.currentTimeMillis()}")
-                putExtra("soundName", "default")
+                putExtra("soundName", soundName)
             }
 
             val pendingIntent = PendingIntent.getBroadcast(
@@ -105,11 +105,10 @@ class AlarmModule(private val reactContext: ReactApplicationContext) :
             )
 
             val alarmManager = reactContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                snoozeTime,
-                pendingIntent
-            )
+
+            val showIntent = packageManager(reactContext)
+            val alarmClockInfo = AlarmManager.AlarmClockInfo(snoozeTime, showIntent)
+            alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
 
             promise.resolve(true)
         } catch (e: Exception) {
@@ -125,5 +124,31 @@ class AlarmModule(private val reactContext: ReactApplicationContext) :
         } else {
             promise.resolve(true)
         }
+    }
+
+    @ReactMethod
+    fun getLaunchAlarmId(promise: Promise) {
+        try {
+            val activity = currentActivity
+            val alarmId = activity?.intent?.getStringExtra("alarmId")
+            // Clear so we don't re-trigger on subsequent calls
+            activity?.intent?.removeExtra("alarmId")
+            promise.resolve(alarmId)
+        } catch (e: Exception) {
+            promise.resolve(null)
+        }
+    }
+
+    /** Build a PendingIntent that opens the app (used as the show intent for AlarmClockInfo) */
+    private fun packageManager(context: Context): PendingIntent {
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        return PendingIntent.getActivity(
+            context,
+            0,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
     }
 }
