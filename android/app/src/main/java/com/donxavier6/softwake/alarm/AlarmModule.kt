@@ -4,10 +4,14 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.Log
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKeys
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -176,15 +180,57 @@ class AlarmModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
-    // GAP-01: Save alarms to native SharedPreferences for reboot rescheduling
+    // GAP-01: Save alarms to EncryptedSharedPreferences for reboot rescheduling
     @ReactMethod
     fun saveAlarmsForReboot(alarmsJson: String, promise: Promise) {
         try {
-            val prefs = reactContext.getSharedPreferences("softwake_alarms_native", Context.MODE_PRIVATE)
+            val prefs = getEncryptedPrefs(reactContext)
             prefs.edit().putString("alarms", alarmsJson).apply()
+            // Remove legacy unencrypted data if it exists
+            val legacy = reactContext.getSharedPreferences("softwake_alarms_native", Context.MODE_PRIVATE)
+            if (legacy.contains("alarms")) {
+                legacy.edit().remove("alarms").apply()
+            }
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("SAVE_ERROR", e.message)
+        }
+    }
+
+    companion object {
+        private const val ENCRYPTED_PREFS_NAME = "softwake_alarms_encrypted"
+
+        fun getEncryptedPrefs(context: Context): SharedPreferences {
+            val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
+            return EncryptedSharedPreferences.create(
+                ENCRYPTED_PREFS_NAME,
+                masterKeyAlias,
+                context,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        }
+
+        /**
+         * Read alarms JSON, migrating from legacy unencrypted prefs if needed.
+         */
+        fun readAlarmsJson(context: Context): String? {
+            // Try encrypted store first
+            val encrypted = getEncryptedPrefs(context)
+            val alarmsJson = encrypted.getString("alarms", null)
+            if (alarmsJson != null) return alarmsJson
+
+            // Migrate from legacy unencrypted store
+            val legacy = context.getSharedPreferences("softwake_alarms_native", Context.MODE_PRIVATE)
+            val legacyJson = legacy.getString("alarms", null)
+            if (legacyJson != null) {
+                encrypted.edit().putString("alarms", legacyJson).apply()
+                legacy.edit().remove("alarms").apply()
+                Log.d("AlarmModule", "Migrated alarm data to encrypted storage")
+                return legacyJson
+            }
+
+            return null
         }
     }
 

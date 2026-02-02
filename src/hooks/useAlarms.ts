@@ -4,8 +4,8 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Alert } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
+import { getSecureItem, setSecureItem } from '../services/secureStorage';
 import type { Alarm, AlarmSound, DismissType, WakeIntensity } from '../types';
 import { safeJsonParse } from '../utils/safeJsonParse';
 import { validateAlarm, clampHour, clampMinute } from '../utils/validation';
@@ -94,7 +94,7 @@ export function useAlarms(): UseAlarmsReturn {
   useEffect(() => {
     const loadAlarms = async () => {
       try {
-        const storedAlarms = await AsyncStorage.getItem(STORAGE_KEY);
+        const storedAlarms = await getSecureItem(STORAGE_KEY);
         if (storedAlarms) {
           // GAP-07: Safe JSON parse with fallback
           const parsed = safeJsonParse<any[]>(storedAlarms, []);
@@ -118,7 +118,7 @@ export function useAlarms(): UseAlarmsReturn {
     if (!isLoaded) return;
     const timer = setTimeout(async () => {
       try {
-        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(alarms));
+        await setSecureItem(STORAGE_KEY, JSON.stringify(alarms));
       } catch (error) {
         logger.log('Error saving alarms:', error);
         // GAP-32: Show user-facing error on save failure (once per session)

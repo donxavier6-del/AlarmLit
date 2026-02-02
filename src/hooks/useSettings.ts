@@ -5,8 +5,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { Alert } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Settings } from '../types';
+import { getSecureItem, setSecureItem } from '../services/secureStorage';
 import { safeJsonParse } from '../utils/safeJsonParse';
 import { validateSettings } from '../utils/validation';
 import { logger } from '../utils/logger';
@@ -43,7 +43,7 @@ export function useSettings(): UseSettingsReturn {
   useEffect(() => {
     const loadSettings = async () => {
       try {
-        const stored = await AsyncStorage.getItem(STORAGE_KEY);
+        const stored = await getSecureItem(STORAGE_KEY);
         if (stored) {
           // GAP-07: Safe JSON parse
           const parsed = safeJsonParse(stored, null);
@@ -65,7 +65,7 @@ export function useSettings(): UseSettingsReturn {
     if (isLoading) return;
     const timer = setTimeout(async () => {
       try {
-        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+        await setSecureItem(STORAGE_KEY, JSON.stringify(settings));
       } catch (error) {
         logger.log('Error saving settings:', error);
         // GAP-32: Show user-facing error (once per session)

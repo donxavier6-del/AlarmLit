@@ -1,7 +1,7 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { nativeAlarm, generateAlarmId } from './nativeAlarm';
 import { safeJsonParse } from '../utils/safeJsonParse';
 import { logger } from '../utils/logger';
+import { getSecureItem, setSecureItem } from './secureStorage';
 
 const STORAGE_KEY = 'softwake_scheduled_alarms';
 
@@ -30,13 +30,13 @@ export const saveAndScheduleAlarm = async (
 
   const existing = await getStoredAlarms();
   existing.push(alarm);
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(existing));
+  await setSecureItem(STORAGE_KEY, JSON.stringify(existing));
 
   return alarm;
 };
 
 export const getStoredAlarms = async (): Promise<StoredAlarm[]> => {
-  const data = await AsyncStorage.getItem(STORAGE_KEY);
+  const data = await getSecureItem(STORAGE_KEY);
   // GAP-07: Safe JSON parse
   return data ? safeJsonParse<StoredAlarm[]>(data, []) : [];
 };
@@ -46,7 +46,7 @@ export const removeAlarm = async (id: string): Promise<void> => {
 
   const alarms = await getStoredAlarms();
   const filtered = alarms.filter(a => a.id !== id);
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+  await setSecureItem(STORAGE_KEY, JSON.stringify(filtered));
 };
 
 export const rescheduleAllAlarms = async (): Promise<void> => {
@@ -65,12 +65,12 @@ export const rescheduleAllAlarms = async (): Promise<void> => {
     }
   }
 
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(validAlarms));
+  await setSecureItem(STORAGE_KEY, JSON.stringify(validAlarms));
 };
 
 export const cleanupExpiredAlarms = async (): Promise<void> => {
   const alarms = await getStoredAlarms();
   const now = Date.now();
   const validAlarms = alarms.filter(a => a.timestamp > now);
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(validAlarms));
+  await setSecureItem(STORAGE_KEY, JSON.stringify(validAlarms));
 };

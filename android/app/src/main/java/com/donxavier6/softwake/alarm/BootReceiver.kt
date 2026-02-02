@@ -26,8 +26,7 @@ class BootReceiver : BroadcastReceiver() {
         Log.d(TAG, "Received ${intent.action} - rescheduling alarms from native store")
 
         try {
-            val prefs = context.getSharedPreferences("softwake_alarms_native", Context.MODE_PRIVATE)
-            val alarmsJson = prefs.getString("alarms", null) ?: return
+            val alarmsJson = AlarmModule.readAlarmsJson(context) ?: return
 
             val alarms = JSONArray(alarmsJson)
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager

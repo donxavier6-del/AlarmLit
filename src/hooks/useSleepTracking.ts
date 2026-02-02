@@ -5,8 +5,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { Alert } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DAYS } from '../constants/options';
+import { getSecureItem, setSecureItem } from '../services/secureStorage';
 import { formatTimeWithPeriod } from '../utils/timeFormatting';
 import type { SleepEntry } from '../types';
 import { safeJsonParse } from '../utils/safeJsonParse';
@@ -72,7 +72,7 @@ export function useSleepTracking(): UseSleepTrackingReturn {
   useEffect(() => {
     const loadSleepData = async () => {
       try {
-        const storedSleep = await AsyncStorage.getItem(SLEEP_STORAGE_KEY);
+        const storedSleep = await getSecureItem(SLEEP_STORAGE_KEY);
         if (storedSleep) {
           // GAP-07: Safe JSON parse
           const parsed = safeJsonParse<any[]>(storedSleep, []);
@@ -96,7 +96,7 @@ export function useSleepTracking(): UseSleepTrackingReturn {
     if (isLoading) return;
     const timer = setTimeout(async () => {
       try {
-        await AsyncStorage.setItem(SLEEP_STORAGE_KEY, JSON.stringify(sleepData));
+        await setSecureItem(SLEEP_STORAGE_KEY, JSON.stringify(sleepData));
       } catch (error) {
         logger.log('Error saving sleep data:', error);
         // GAP-32: Show user-facing error on save failure (once per session)
